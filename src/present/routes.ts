@@ -5,11 +5,11 @@ import { plainName } from "./text";
 export const HOME = "#/";
 export const CHAT = "#/chat";
 
-/** A workspace's page on its card, `#/workspaces/card/<owner>/<name>`, or null for a name that is not plain. */
+/** A workspace's page at Oerba's own route, `#/ws/<owner>/<name>`, or null for a name that is not plain. */
 export function workspaceRoute(owner: unknown, name: unknown): string | null {
   const o = plainName(owner);
   const n = plainName(name);
-  return o === null || n === null ? null : `#/workspaces/card/${encodeURIComponent(o)}/${encodeURIComponent(n)}`;
+  return o === null || n === null ? null : `#/ws/${encodeURIComponent(o)}/${encodeURIComponent(n)}`;
 }
 
 const SAFE_ROUTE = /^#\/[A-Za-z0-9._@%~/-]{0,300}(?![\s\S])/;

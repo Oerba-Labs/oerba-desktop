@@ -1,6 +1,6 @@
 /* Reading GET /api/now into the small model the menu bar, notifications and badge are made from. Pure.
    Keys read, and nothing else: needs_you[] {machine, text}; owners[] (its presence marks the platform owner's answer);
-   machines.*.state.workspaces[] {name, owner, status}; events[] {id, kind, subject, summary, outcome}. */
+   machines.*.state.workspaces[] {name, owner, status}; events[] {id, kind, subject, summary, failed}. */
 
 import { clean, plainName } from "./text";
 
@@ -65,7 +65,7 @@ export function parseNow(body: unknown, me: Me): NowModel | null {
     const o = obj(e);
     const id = o?.["id"];
     if (typeof id !== "number" || !Number.isSafeInteger(id) || o?.["kind"] !== "deploy") continue;
-    deploys.push({ id, failed: o["outcome"] === "failed", subject: clean(o["subject"], 40), summary: clean(o["summary"], 100) });
+    deploys.push({ id, failed: o["failed"] === true, subject: clean(o["subject"], 40), summary: clean(o["summary"], 100) });
   }
 
   return { isOwner, workspaces, needs, deploys };

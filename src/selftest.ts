@@ -96,7 +96,7 @@ export async function runSelftest(h: Hooks): Promise<void> {
     await fetch(`${h.policy.oerbaOrigin}/__now`, { method: "POST", body: "second" });
     await until("the second read", async () => { await presence.refresh(); return notes.length > 0; });
     check("a new need, a failed deploy and a failed workspace made one notification each, and a good deploy none", notes.length === 3 && notes.map((n) => n.title).sort().join("|") === "A deploy failed|A workspace failed|Waiting on you", notes.map((n) => n.title).join("|"));
-    check("the failed workspace's notification opens its card", notes.some((n) => n.route === "#/workspaces/card/alice/demo"));
+    check("the failed workspace's notification opens its page", notes.some((n) => n.route === "#/ws/alice/demo"));
     check("the badge follows", app.dock?.getBadge() === "2", String(app.dock?.getBadge()));
     await presence.refresh();
     check("reading the same answer again made none more", notes.length === 3);

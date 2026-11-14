@@ -12,7 +12,7 @@ const ws = (owner: string, name: string, status: string) => ({ owner, name, stat
 const ownerBody = (extra: object = {}) => ({
   at: 1, owners: ["alice"], needs_you: [{ machine: "m1", text: "m1 has gone quiet", opened: 1, quiet: true }],
   machines: { m1: { state: { workspaces: [ws("alice", "demo", "running"), ws("bob", "theirs", "running"), ws("alice-gh@github", "gh", "stopped")] } }, m2: { state: null } },
-  events: [{ id: 7, kind: "deploy", subject: "app", summary: "tests failed", outcome: "failed" }, { id: 6, kind: "restart", subject: "x", summary: "", outcome: null }, { id: 5, kind: "deploy", subject: "app", summary: "ok", outcome: "done" }],
+  events: [{ id: 7, kind: "deploy", subject: "app", summary: "tests failed", failed: true }, { id: 6, kind: "restart", subject: "x", summary: "", failed: true }, { id: 5, kind: "deploy", subject: "app", summary: "ok", failed: false }, { id: 4, kind: "deploy", subject: "app", summary: "no flag" }],
   ...extra,
 });
 const developerBody = () => ({ at: 1, needs_you: [], machines: { m1: { state: { workspaces: [ws("bob", "mine", "failed")] } } }, events: [], deploying: [] });
@@ -22,7 +22,7 @@ test("an owner's answer: their own workspaces, what waits, and the deploy lines"
   assert.equal(m.isOwner, true);
   assert.deepEqual(m.workspaces.map((w) => `${w.owner}/${w.name}/${w.status}`), ["alice/demo/running", "alice-gh@github/gh/stopped"]);
   assert.deepEqual(m.needs, [{ key: "m1\tm1 has gone quiet", title: "m1 has gone quiet" }]);
-  assert.deepEqual(m.deploys.map((d) => [d.id, d.failed]), [[7, true], [5, false]]);
+  assert.deepEqual(m.deploys.map((d) => [d.id, d.failed]), [[7, true], [5, false], [4, false]]);
 });
 
 test("a developer's answer holds theirs already, carries no needs, and is not the owner's", () => {
@@ -35,10 +35,10 @@ test("a developer's answer holds theirs already, carries no needs, and is not th
 
 test("malformed answers are nothing or empty, and odd entries are skipped", () => {
   for (const bad of [null, undefined, 3, "x", [], [{}]]) assert.equal(parseNow(bad, me), null);
-  const m = parseNow({ owners: [], needs_you: [1, null, { text: 5 }, { text: "ok", machine: 3 }], machines: { a: 1, b: { state: { workspaces: [null, { name: "../x", owner: "alice", status: "running" }, { name: "good", owner: "alice" }, { name: "fine", owner: "alice", status: "running" }] } } }, events: [{ id: "1", kind: "deploy" }, { id: 2.5, kind: "deploy" }, { id: 3, kind: "deploy", outcome: "failed", subject: 4 }] }, me)!;
+  const m = parseNow({ owners: [], needs_you: [1, null, { text: 5 }, { text: "ok", machine: 3 }], machines: { a: 1, b: { state: { workspaces: [null, { name: "../x", owner: "alice", status: "running" }, { name: "good", owner: "alice" }, { name: "fine", owner: "alice", status: "running" }] } } }, events: [{ id: "1", kind: "deploy" }, { id: 2.5, kind: "deploy" }, { id: 3, kind: "deploy", failed: true, subject: 4 }, { id: 8, kind: "deploy", failed: "true" }, { id: 9, kind: "deploy", outcome: "failed" }] }, me)!;
   assert.deepEqual(m.workspaces.map((w) => w.name), ["fine"]);
   assert.equal(m.needs.length, 1);
-  assert.deepEqual(m.deploys.map((d) => d.id), [3]);
+  assert.deepEqual(m.deploys.map((d) => [d.id, d.failed]), [[3, true], [8, false], [9, false]]);   // only failed === true counts; outcome is not read
   assert.deepEqual(parseNow({}, me), { isOwner: false, workspaces: [], needs: [], deploys: [] });
 });
 
@@ -69,7 +69,7 @@ test("a new need, a failed deploy and a newly failed workspace each make one; su
     workspaces: [{ owner: "alice", name: "w", status: "failed" }],
   }));
   assert.deepEqual(r.items.map((i) => [i.title, i.body, i.route]), [
-    ["Waiting on you", "b", "#/"], ["A deploy failed", "app: tests failed", "#/"], ["A workspace failed", "w", "#/workspaces/card/alice/w"],
+    ["Waiting on you", "b", "#/"], ["A deploy failed", "app: tests failed", "#/"], ["A workspace failed", "w", "#/ws/alice/w"],
   ]);
   const again = decide(r.next, model({ needs: [need("a"), need("b")], deploys: [{ id: 3, failed: false, subject: "x", summary: "fine" }, { id: 2, failed: true, subject: "app", summary: "tests failed" }], workspaces: [{ owner: "alice", name: "w", status: "failed" }] }));
   assert.deepEqual(again.items, []);
@@ -114,13 +114,13 @@ test("the badge counts what waits on the owner, and nothing for anyone else or a
 });
 
 test("a workspace's route is encoded, and an odd name has none", () => {
-  assert.equal(workspaceRoute("alice", "demo-1"), "#/workspaces/card/alice/demo-1");
-  assert.equal(workspaceRoute("alice@github", "a.b_c"), "#/workspaces/card/alice%40github/a.b_c");
+  assert.equal(workspaceRoute("alice", "demo-1"), "#/ws/alice/demo-1");
+  assert.equal(workspaceRoute("alice@github", "a.b_c"), "#/ws/alice%40github/a.b_c");
   for (const bad of ["", "../x", "a/b", "a b", "a?b", "a#b", "-x", ".x", "x".repeat(65), "é", "a\n", "%2e%2e", 5, null, undefined]) {
     assert.equal(workspaceRoute("alice", bad), null, String(bad));
     assert.equal(workspaceRoute(bad, "demo"), null, String(bad));
   }
-  assert.equal(safeRoute("#/workspaces/card/alice/demo"), true);
+  assert.equal(safeRoute("#/ws/alice/demo"), true);
   assert.equal(safeRoute("#/"), true);
   for (const bad of ["", "#", "/x", "#/a b", "#/../x", "#/x\n", "javascript:1", "#/x';alert(1)//", 5]) assert.equal(safeRoute(bad), false, String(bad));
 });

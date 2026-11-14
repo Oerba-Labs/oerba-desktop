@@ -12,7 +12,7 @@ const base = { owners: ["x"], machines: { m1: { state: { workspaces: [{ name: "d
 let nowBody = { ...base, needs_you: [{ machine: "m1", text: "first thing waits" }] };
 const second = { ...base, needs_you: [{ machine: "m1", text: "first thing waits" }, { machine: "m1", text: "second thing waits" }],
   machines: { m1: { state: { workspaces: [{ name: "demo", owner: "alice", status: "failed" }] } } },
-  events: [{ id: 6, kind: "deploy", subject: "app", summary: "deployed", outcome: "done" }, { id: 5, kind: "deploy", subject: "app", summary: "tests failed", outcome: "failed" }] };
+  events: [{ id: 6, kind: "deploy", subject: "app", summary: "deployed", failed: false }, { id: 5, kind: "deploy", subject: "app", summary: "tests failed", failed: true }, { id: 4, kind: "deploy", subject: "app", summary: "older console, no flag" }] };
 const page = (title) => `<!doctype html><title>${title}</title><p>${title}</p>`;
 
 const oerba = createServer((req, res) => {
