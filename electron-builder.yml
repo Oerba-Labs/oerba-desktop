@@ -51,3 +51,6 @@ electronFuses:
   onlyLoadAppFromAsar: true                         # no loose app folder beside it
   grantFileProtocolExtraPrivileges: false           # file:// pages get a browser's privileges and no more
   enableCookieEncryption: true
+# Electron 44 has a ninth fuse, WasmTrapHandlers (WebAssembly out-of-bounds traps by signal handler), which this electron-builder's
+# own copy of @electron/fuses does not know and so cannot be set here. It stays at Electron's default, enabled; the release build
+# reads it back (scripts/lib-pack.sh) and refuses to ship if it is not.

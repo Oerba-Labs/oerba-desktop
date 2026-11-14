@@ -13,7 +13,7 @@
 #   5. checks, and stops at the first that fails: codesign --verify --deep --strict on the app; spctl on the app and
 #      (-t install) on the dmg; xcrun stapler validate on the app and the dmg; every fuse read back from the app is as
 #      configured; and the packed app.asar holds none of the self-test's strings;
-#   6. prints each file's SHA-256 (after stapling), latest-mac.yml, and the command that makes the GitHub release.
+#   6. refuses to start without release-notes/v<version>.md, written by hand, which is the release's notes; and prints each file's SHA-256 (after stapling), latest-mac.yml, and the command that makes the GitHub release.
 #
 # What it will not do: publish anything, create a tag or a release, upload to GitHub or push; it runs electron-builder with
 # --publish never. Apple is contacted by notarytool alone, for the notarisation of this build's app and dmg.
@@ -28,8 +28,10 @@ fail() { echo "release: $*" >&2; exit 1; }
 version="$(node -p "require('./package.json').version")"
 tag="v$version"
 commit="$(git rev-parse HEAD)"
+notes="release-notes/$tag.md"
 
 echo "== checks before anything is built ($tag at ${commit:0:9})"
+[ -s "$notes" ] || fail "$notes is missing or empty: the release's notes are written in the repository, by hand, before the version is released."
 [ -z "$(git status --porcelain)" ] || fail "the working tree is not clean; commit or remove what git status shows."
 git rev-parse -q --verify "refs/tags/$tag" >/dev/null && fail "$tag is already tagged here."
 if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then fail "$tag is already on origin."; fi
@@ -79,17 +81,10 @@ echo "== files, after stapling"
 echo "== latest-mac.yml"
 cat release/latest-mac.yml
 
-notes="release/notes-$tag.md"
-{
-  echo "Oerba Desktop $version"
-  echo
-  git log --format='- %s' "$(git describe --tags --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD | tail -1)..HEAD" | head -40
-} > "$notes"
-
 cat <<MSG
 
 == built, signed, notarised and verified; nothing was published
-Read and edit the notes: $notes
+The notes, written in the repository: $notes
 Then, as a DRAFT release (read it on GitHub, then publish it there):
 
   gh release create $tag \\

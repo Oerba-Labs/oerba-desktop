@@ -26,6 +26,8 @@ node scripts/finish-latest.mjs "$scratch/rel" "$version"
 grep -c "url:" "$scratch/rel/latest-mac.yml" | grep -qx 1 || { echo "latest-mac.yml still lists more than the zip" >&2; exit 1; }
 
 echo "== the packed app starts and draws its setup screen"
+# The app holds a single-instance lock in its data folder, so another Oerba running on this Mac would make this copy exit at once.
+if pgrep -f "Oerba.app/Contents/MacOS/Oerba" >/dev/null; then echo "Another Oerba is running: quit it, then run this again." >&2; exit 1; fi
 cp -R "$app" "$scratch/Oerba.app"
 codesign --force --deep --sign - "$scratch/Oerba.app" >/dev/null 2>&1
 "$scratch/Oerba.app/Contents/MacOS/Oerba" > "$scratch/run.log" 2>&1 &

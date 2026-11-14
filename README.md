@@ -69,13 +69,13 @@ Releasing is the owner's, on the Mac that holds the signing identity (a "Develop
 bash scripts/release.sh
 ```
 
-It refuses a dirty tree, a tag that exists, or a commit not on `origin/main`; installs and tests; packs, signs, notarises and staples the app with electron-builder; signs, notarises and staples the dmg too; rewrites `latest-mac.yml` to list the zip alone (stapling changed the dmg's bytes, and the Mac updater installs from the zip), checked against the zip on disk; stops unless `codesign`, `spctl` (app and dmg), `stapler validate` (app and dmg), the fuses read back and a search of the packed `app.asar` for the self-test all pass; and prints every file's SHA-256 (after stapling), `latest-mac.yml` and the next command. It publishes nothing. That command makes a **draft** GitHub release, to be read and published on GitHub:
+The release's notes are written by hand in the repository, `release-notes/v<version>.md`, and committed with the version bump; the script refuses to start if the file for `package.json`'s version is missing or empty, and the printed command uses it as the release's notes. It refuses a dirty tree, a tag that exists, or a commit not on `origin/main`; installs and tests; packs, signs, notarises and staples the app with electron-builder; signs, notarises and staples the dmg too; rewrites `latest-mac.yml` to list the zip alone (stapling changed the dmg's bytes, and the Mac updater installs from the zip), checked against the zip on disk; stops unless `codesign`, `spctl` (app and dmg), `stapler validate` (app and dmg), the fuses read back and a search of the packed `app.asar` for the self-test all pass; and prints every file's SHA-256 (after stapling), `latest-mac.yml` and the next command. It publishes nothing. That command makes a **draft** GitHub release, to be read and published on GitHub:
 
 ```sh
 gh release create v<version> \
   release/Oerba-<version>-arm64.dmg release/Oerba-<version>-arm64-mac.zip \
   release/Oerba-<version>-arm64-mac.zip.blockmap release/latest-mac.yml \
-  --target <commit> --draft --title "Oerba Desktop <version>" --notes-file release/notes-v<version>.md
+  --target <commit> --draft --title "Oerba Desktop <version>" --notes-file release-notes/v<version>.md
 ```
 
 The package is arm64 only: every Mac Oerba's people use is Apple silicon, and a universal build would double a 125 MB download for none of them.
