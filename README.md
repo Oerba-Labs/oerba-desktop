@@ -19,6 +19,18 @@ first that is not:
 
 While the setup screen is open it asks Oerba again every 30 seconds, so an invitation accepted in Tailscale lets the person in without reopening the app.
 
+## The menu bar, notifications and the dock (stage 3)
+
+Once the person is in, the app stays in the menu bar. Closing the window only hides it; Quit (menu bar item or ⌘Q) ends the app.
+
+- **Reads** `GET /api/now` and `GET /api/who` from the main process every 60 seconds, every 20 while the window is shown. Nothing is asked during setup.
+- **The menu**: Open Oerba; Workspaces (your started ones, each opening its page); Waiting on you (n), the platform owner's alone; New chat; Switch workspace…; Open at login (a checkbox that changes the login item only when you tick it); Quit.
+- **Notifications**, quiet on success: only when something newly waits on the owner, a deploy fails, or one of your workspaces fails. Not on the first read after the app starts, at most five a minute with the rest folded into "and n more". Clicking one opens the window at the right page.
+- **The dock badge** counts what waits on the platform owner, and is empty for anyone else.
+- **Global shortcuts**: ⌥Space shows the window and opens Oerba's own palette (it sends ⌘K to Oerba's page, which toggles it); ⌥⇧Space opens a new chat. Each is taken only if no other app holds it, and the menu says so if one is held.
+
+All of it only reports and opens pages: nothing here deploys, starts, stops or changes anything. Every word from Oerba is cut to length and reduced to plain printable characters before it reaches a menu or a notification.
+
 ## What it does not do
 
 - It **deploys nothing** and has no way to.
@@ -50,14 +62,16 @@ override is honoured only when the app is **not packaged** and `--selftest` is g
 
 - `src/policy/`: the shell's rules as small pure modules (navigation, permissions, external links), tested without Electron.
 - `src/setup/`: what the setup screen checks (`probes.ts`), how it reads `/api/who` (`who.ts`) and how the steps follow from it (`state.ts`).
+- `src/present/`: the menu bar, notifications and badge: reading `/api/now` (`now.ts`), what is worth a notification (`notify.ts`), the menu as data (`menu.ts`), routes (`routes.ts`), plain text (`text.ts`), and `presence.ts` wiring them to Electron.
 - `src/shell/hardening.ts`: wires the policies to Electron. `src/main.ts`: the window. `src/preload-setup.ts`: the setup page's three calls.
 - `static/`, `src/renderer/`: the setup screen's HTML, CSS (Oerba's Quiet Slate) and TypeScript.
 
 ## Stages to come
 
-Stage 1 is this: the shell and the setup screen, unsigned. Later: packing, signing and notarising with electron-builder; an
-updater that asks (electron-updater, with GitHub Releases); then every workspace's pages kept open side by side, the menu bar
-item, reaching the computer (forwarded ports, folders), and simulators. Each is its own stage.
+Stage 1 was the shell and the setup screen; stage 3 (this version, 0.2.0) adds the menu bar item, notifications, the dock badge and the
+shortcuts. Later: packing, signing and notarising with electron-builder; an updater that asks (electron-updater, with GitHub
+Releases); then every workspace's pages kept open side by side, reaching the computer (forwarded ports, folders), and simulators.
+Each is its own stage.
 
 ## Licence
 

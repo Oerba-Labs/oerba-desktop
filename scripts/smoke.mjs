@@ -8,13 +8,20 @@ import { createRequire } from "node:module";
 const electron = createRequire(import.meta.url)("electron");
 
 let open = false;
+const base = { owners: ["x"], machines: { m1: { state: { workspaces: [{ name: "demo", owner: "alice", status: "running" }, { name: "other", owner: "bob", status: "running" }] } } }, events: [] };
+let nowBody = { ...base, needs_you: [{ machine: "m1", text: "first thing waits" }] };
+const second = { ...base, needs_you: [{ machine: "m1", text: "first thing waits" }, { machine: "m1", text: "second thing waits" }],
+  machines: { m1: { state: { workspaces: [{ name: "demo", owner: "alice", status: "failed" }] } } },
+  events: [{ id: 6, kind: "deploy", subject: "app", summary: "deployed", outcome: "done" }, { id: 5, kind: "deploy", subject: "app", summary: "tests failed", outcome: "failed" }] };
 const page = (title) => `<!doctype html><title>${title}</title><p>${title}</p>`;
 
 const oerba = createServer((req, res) => {
   if (req.method === "POST" && req.url === "/__open") { open = true; res.writeHead(204).end(); return; }
+  if (req.method === "POST" && req.url === "/__now") { nowBody = second; res.writeHead(204).end(); return; }
+  if (req.url === "/api/now") { res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(nowBody)); return; }
   if (req.url === "/api/who") {
     if (!open) { res.writeHead(503).end("not shared yet"); return; }
-    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ known: true, handle: "", person: "nobody", may_act: false, github: "" }));
+    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ known: true, handle: "alice", person: "nobody", may_act: false, github: "" }));
     return;
   }
   if (req.url === "/gate") {
@@ -40,7 +47,7 @@ const stranger = createServer((_req, res) => res.writeHead(200, { "content-type"
 const listen = (s) => new Promise((r) => s.listen(0, "127.0.0.1", () => r(s.address().port)));
 const [a, b] = [await listen(oerba), await listen(stranger)];
 
-const child = spawn(electron, [".", "--selftest", `--oerba-origin=http://127.0.0.1:${a}`, `--other-origin=http://127.0.0.1:${b}`, "--poll-ms=300"], { stdio: "inherit" });
+const child = spawn(electron, [".", "--selftest", `--oerba-origin=http://127.0.0.1:${a}`, `--other-origin=http://127.0.0.1:${b}`, "--poll-ms=300", "--present-ms=400"], { stdio: "inherit" });
 const killer = setTimeout(() => { console.log("smoke: killed after 90 s"); child.kill("SIGKILL"); }, 90_000);
 child.on("exit", (code) => {
   clearTimeout(killer);

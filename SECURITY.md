@@ -26,6 +26,11 @@ only wires them in.
   Devices are the app's own screens' to ask for one day, never a workspace's page.
 - **Setup checks only read.** The only program run is Tailscale's `status --json`, by `execFile` with fixed arguments and no shell, and only its backend state is kept.
   Oerba is asked with a plain `GET /api/who`, no redirects followed, a timeout and a size limit.
+- **The menu bar, notifications and badge only report.** They read `/api/now` and `/api/who` (a GET each, no redirects, a timeout, a 2 MB cap, a JSON object or nothing),
+  never during setup. Every item and every notification click only opens the window at a route of Oerba's page; none sends anything to Oerba or presses anything. A route is built from
+  workspace and owner names that match a plain-name pattern, URL-encoded, and is checked again before it is put in the page's address, by changing only the hash. Every string from Oerba
+  is cut to a length and reduced to plain printable characters (no control, bidirectional or private-use characters) before it reaches the menu, a notification or the badge.
+  No bridge is given to any page for this. A global shortcut sends ⌘K to Oerba's own page with `sendInputEvent`, as a key press, and nothing else. The login item changes only when the person ticks it.
 - **The self-test override** of Oerba's address needs both an unpackaged app and an explicit `--selftest` flag, and accepts only a loopback `http` origin.
 - **The app holds no secret** and names no address that is not public.
 

@@ -18,3 +18,5 @@ if (tests.length) {
 
 cpSync("static/setup.html", "dist/setup/setup.html");
 cpSync("static/setup.css", "dist/setup/setup.css");
+cpSync("static/trayTemplate.png", "dist/trayTemplate.png");
+cpSync("static/trayTemplate@2x.png", "dist/trayTemplate@2x.png");

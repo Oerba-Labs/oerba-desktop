@@ -11,6 +11,8 @@ export interface Config {
   otherOrigin: string | null;
   /** How often the setup screen asks Oerba again. */
   pollMs: number;
+  /** Self-test only: how often the menu bar item reads /api/now. */
+  presentMs: number | null;
 }
 
 const LOOPBACK = /^http:\/\/(?:127\.0\.0\.1|localhost):[0-9]{1,5}$/;
@@ -22,7 +24,7 @@ function flag(argv: readonly string[], name: string): string | null {
 }
 
 export function configFrom(argv: readonly string[], isPackaged: boolean): Config {
-  const config: Config = { oerbaOrigin: OERBA_ORIGIN, selftest: false, otherOrigin: null, pollMs: 30_000 };
+  const config: Config = { oerbaOrigin: OERBA_ORIGIN, selftest: false, otherOrigin: null, pollMs: 30_000, presentMs: null };
   // Both conditions, every time: a packaged app ignores every one of these flags, whatever it is given.
   if (isPackaged || !argv.includes("--selftest")) return config;
   config.selftest = true;
@@ -32,5 +34,7 @@ export function configFrom(argv: readonly string[], isPackaged: boolean): Config
   if (other !== null && LOOPBACK.test(other)) config.otherOrigin = other;
   const poll = Number(flag(argv, "poll-ms"));
   if (Number.isInteger(poll) && poll >= 50 && poll <= 30_000) config.pollMs = poll;
+  const present = Number(flag(argv, "present-ms"));
+  if (Number.isInteger(present) && present >= 50 && present <= 60_000) config.presentMs = present;
   return config;
 }

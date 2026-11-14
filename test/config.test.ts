@@ -6,7 +6,7 @@ const flags = ["--selftest", "--oerba-origin=http://127.0.0.1:4010", "--other-or
 
 test("a packaged app ignores every override, whatever it is given", () => {
   const c = configFrom(["app", ...flags], true);
-  assert.deepEqual(c, { oerbaOrigin: OERBA_ORIGIN, selftest: false, otherOrigin: null, pollMs: 30_000 });
+  assert.deepEqual(c, { oerbaOrigin: OERBA_ORIGIN, selftest: false, otherOrigin: null, pollMs: 30_000, presentMs: null });
 });
 
 test("an unpackaged app honours the override only with --selftest", () => {
@@ -14,7 +14,7 @@ test("an unpackaged app honours the override only with --selftest", () => {
   assert.equal(c.oerbaOrigin, OERBA_ORIGIN);
   assert.equal(c.selftest, false);
   const d = configFrom(["electron", ".", ...flags], false);
-  assert.deepEqual(d, { oerbaOrigin: "http://127.0.0.1:4010", selftest: true, otherOrigin: "http://localhost:4011", pollMs: 200 });
+  assert.deepEqual(d, { oerbaOrigin: "http://127.0.0.1:4010", selftest: true, otherOrigin: "http://localhost:4011", pollMs: 200, presentMs: null });
 });
 
 test("the override must be a loopback http origin, and the poll a sane number", () => {
@@ -25,5 +25,5 @@ test("the override must be a loopback http origin, and the poll a sane number", 
 });
 
 test("the default is the live Oerba and thirty seconds", () => {
-  assert.deepEqual(configFrom([], false), { oerbaOrigin: "https://app.oerba.dev", selftest: false, otherOrigin: null, pollMs: 30_000 });
+  assert.deepEqual(configFrom([], false), { oerbaOrigin: "https://app.oerba.dev", selftest: false, otherOrigin: null, pollMs: 30_000, presentMs: null });
 });

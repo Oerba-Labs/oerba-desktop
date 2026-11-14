@@ -11,6 +11,10 @@ import { unexpectedSwitches } from "./policy/argv";
 import { isSetupSender, type NavPolicy } from "./policy/navigation";
 import { probeAll, type FetchLike, type RunStatus } from "./setup/probes";
 import { computeSetup, type SetupState } from "./setup/state";
+import { isOerbaPage } from "./policy/navigation";
+import { safeRoute } from "./present/routes";
+import { Presence } from "./present/presence";
+import type { PresentFetch } from "./present/fetch";
 import { installHardening, setRole } from "./shell/hardening";
 
 // Before anything loads: a packaged app opened with a command-line switch (a debugger port, no sandbox, no web security)
@@ -45,6 +49,9 @@ const run: RunStatus = (file, args) => new Promise((resolve) => {
   execFile(file, [...args], { timeout: 5000, maxBuffer: 4_000_000, windowsHide: true }, (_err, stdout) => resolve(stdout ? String(stdout) : null));
 });
 const fetchFn: FetchLike = (url, init) => net.fetch(url, init);
+const presentFetch: PresentFetch = (url, init) => net.fetch(url, init);
+let quitting = false;
+let presence: Presence | null = null;
 
 function fit(view: WebContentsView): void {
   if (!win) return;
@@ -55,6 +62,8 @@ function fit(view: WebContentsView): void {
 function createWindow(): BrowserWindow {
   const w = new BrowserWindow({ width: 1200, height: 800, minWidth: 640, minHeight: 480, show: !config.selftest, title: "Oerba", backgroundColor: "#F6F7F9", webPreferences: { ...SAFE } });
   w.on("resize", () => { if (setupView) fit(setupView); if (oerbaView) fit(oerbaView); });
+  // Closing the window hides it: the app keeps running in the menu bar until Quit or ⌘Q.
+  w.on("close", (e) => { if (!quitting) { e.preventDefault(); w.hide(); } });
   w.on("closed", () => { stopPolling(); win = null; setupView = null; oerbaView = null; });
   return w;
 }
@@ -70,6 +79,7 @@ function showSetup(): void {
     fit(setupView);
     void setupView.webContents.loadURL(policy.setupUrl);
   }
+  presence?.setOut();
   startPolling();
 }
 
@@ -86,6 +96,34 @@ function showOerba(): void {
   // If Oerba cannot be reached after all (the tailnet dropped), the setup screen says what is missing.
   wc.on("did-fail-load", (_e, _code, _desc, _url, isMainFrame) => { if (isMainFrame) showSetup(); });
   void wc.loadURL(`${config.oerbaOrigin}/`);
+  presence?.setIn();
+}
+
+function showWindow(): void {
+  if (!win) win = createWindow();
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
+/** Opens the window at a route of Oerba's page, by changing only its hash where the page is already loaded, so the page and
+    its kept frames are not reloaded. The route is one this app built (safeRoute), and no bridge is given to the page. */
+function openRoute(route: string): void {
+  showWindow();
+  if (!oerbaView || !safeRoute(route)) return;
+  const wc = oerbaView.webContents;
+  if (!wc.isLoading() && isOerbaPage(wc.getURL(), policy)) void wc.executeJavaScript(`location.hash = ${JSON.stringify(route.slice(1))}`);
+  else void wc.loadURL(`${config.oerbaOrigin}/${route}`);
+}
+
+/** ⌘K is what Oerba's own page listens for to open its palette (it toggles, so a second press closes it). */
+function openPalette(): void {
+  showWindow();
+  if (!oerbaView) return;
+  const wc = oerbaView.webContents;
+  wc.focus();
+  wc.sendInputEvent({ type: "keyDown", keyCode: "K", modifiers: ["meta"] });
+  wc.sendInputEvent({ type: "keyUp", keyCode: "K", modifiers: ["meta"] });
 }
 
 async function check(): Promise<void> {
@@ -126,13 +164,17 @@ ipcMain.handle("setup:act", async (event, action: unknown) => {
 
 app.whenReady().then(() => {
   installHardening(policy);
+  presence = new Presence({ oerbaOrigin: config.oerbaOrigin, fetchFn: presentFetch, intervalMs: config.presentMs, windowShown: () => !!win && win.isVisible() && !win.isMinimized(), show: showWindow, openRoute, palette: openPalette, quit: () => app.quit() });
+  presence.start();
   win = createWindow();
   showSetup();
   if (config.selftest) {
     // Loaded only for an unpackaged app given --selftest (config.ts): the self-test is not in the packaged code path.
-    void import("./selftest").then((m) => m.runSelftest({ config, policy, getWin: () => win, getSetup: () => setupView, getOerba: () => oerbaView, SAFE, fit }));
+    void import("./selftest").then((m) => m.runSelftest({ config, policy, getWin: () => win, getSetup: () => setupView, getOerba: () => oerbaView, getPresence: () => presence, SAFE, fit }));
   }
-  app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) { win = createWindow(); showSetup(); } });
+  app.on("activate", () => { if (!win) { win = createWindow(); showSetup(); } else showWindow(); });
 });
 
-app.on("window-all-closed", () => { app.quit(); });
+app.on("before-quit", () => { quitting = true; });
+app.on("will-quit", () => { presence?.stop(); });
+app.on("window-all-closed", () => { /* the menu bar item keeps the app running */ });

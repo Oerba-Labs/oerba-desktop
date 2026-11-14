@@ -4,6 +4,9 @@
 import { app, BrowserWindow, type WebContentsView, type WebPreferences } from "electron";
 import type { Config } from "./config";
 import type { NavPolicy } from "./policy/navigation";
+import type { Presence } from "./present/presence";
+import { sink } from "./present/presence";
+import type { Item } from "./present/notify";
 import { external, refusals, setRole } from "./shell/hardening";
 
 export interface Hooks {
@@ -12,6 +15,7 @@ export interface Hooks {
   getWin(): BrowserWindow | null;
   getSetup(): WebContentsView | null;
   getOerba(): WebContentsView | null;
+  getPresence(): Presence | null;
   SAFE: WebPreferences;
   fit(view: WebContentsView): void;
 }
@@ -33,6 +37,9 @@ export async function runSelftest(h: Hooks): Promise<void> {
     console.log(`${ok ? "ok  " : "FAIL"} ${name}${detail ? ` (${detail})` : ""}`);
     if (!ok) failed++;
   };
+  // Notifications are recorded and never shown, in this run alone.
+  const notes: Item[] = [];
+  sink.show = (item) => { notes.push(item); };
   const watchdog = setTimeout(() => { console.log("FAIL smoke run timed out"); app.exit(1); }, 60_000);
   try {
     const other = h.config.otherOrigin;
@@ -76,6 +83,23 @@ export async function runSelftest(h: Hooks): Promise<void> {
     await until("the navigation refused", () => refusals.total > before);
     await sleep(300);
     check("a navigation out of Oerba's page was refused", oerba.webContents.getURL() === `${h.policy.oerbaOrigin}/` && refusals.has("navigate:main"), oerba.webContents.getURL());
+
+    // 4b. The menu bar item, the badge and the notifications, read from the stand-in's /api/now.
+    const presence = await until("the presence", () => h.getPresence());
+    await until("the first read of /api/now", () => presence.now !== null);
+    const labels = presence.labels();
+    const wanted = ["Open Oerba", "Workspaces", "  demo", "Waiting on you (1)", "New chat", "Switch workspace…", "Open at login", "Quit Oerba"];
+    check("the menu bar item has its items", wanted.every((l) => labels.includes(l)), labels.join(" | "));
+    check("it lists the person's started workspace and not another's", !labels.includes("  other"));
+    check("the dock badge counts what waits on the owner", app.dock?.getBadge() === "1", String(app.dock?.getBadge()));
+    check("the first read made no notification", notes.length === 0, String(notes.length));
+    await fetch(`${h.policy.oerbaOrigin}/__now`, { method: "POST", body: "second" });
+    await until("the second read", async () => { await presence.refresh(); return notes.length > 0; });
+    check("a new need, a failed deploy and a failed workspace made one notification each, and a good deploy none", notes.length === 3 && notes.map((n) => n.title).sort().join("|") === "A deploy failed|A workspace failed|Waiting on you", notes.map((n) => n.title).join("|"));
+    check("the failed workspace's notification opens its card", notes.some((n) => n.route === "#/workspaces/card/alice/demo"));
+    check("the badge follows", app.dock?.getBadge() === "2", String(app.dock?.getBadge()));
+    await presence.refresh();
+    check("reading the same answer again made none more", notes.length === 3);
 
     // 5. Links out. Opening the browser is replaced by a recorder, so nothing real opens.
     const opened: string[] = [];
