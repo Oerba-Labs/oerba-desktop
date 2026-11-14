@@ -1,0 +1,21 @@
+{
+  "name": "oerba-desktop",
+  "version": "0.1.0",
+  "description": "Oerba Desktop: a hardened Electron shell around Oerba, opening on a setup screen that walks a person in.",
+  "private": true,
+  "license": "UNLICENSED",
+  "main": "dist/main.js",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && node scripts/build.mjs",
+    "start": "npm run build && electron .",
+    "test": "npm run build && node --test \"dist/test/*.test.js\"",
+    "smoke": "npm run build && node scripts/smoke.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "electron": "44.10.0",
+    "esbuild": "0.28.2",
+    "typescript": "6.0.3"
+  }
+}
