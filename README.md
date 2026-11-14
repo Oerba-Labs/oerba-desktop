@@ -31,10 +31,26 @@ Once the person is in, the app stays in the menu bar. Closing the window only hi
 
 All of it only reports and opens pages: nothing here deploys, starts, stops or changes anything. Every word from Oerba is cut to length and reduced to plain printable characters before it reaches a menu or a notification.
 
+## A workspace's ports on localhost (0.4.0)
+
+In the menu bar item, each of your started workspaces has a submenu: **Open in Oerba**, then its ports. **Open on localhost:8081** starts a forward: the app listens on `127.0.0.1` and `::1` on that number and relays HTTP and websockets to the same port of the workspace, so `http://localhost:8081` on the Mac is the workspace's port 8081. If the number is already taken on the Mac (by another program, or another forward) the next free one is used, and the menu shows it: **localhost:8082 → 8081 (stop)**. A forward stops when you press that item, when its workspace is no longer started, and when the app quits. The ports offered are 3000, 5173, 8000, 8080, 8081, 19000 and 19006: Oerba's page does not say which ports a workspace is listening on, so the list is a fixed one of the usual dev servers.
+
+You need to be on the tailnet as for Oerba itself; the relay holds no credential and asks On-Demand as you.
+
+**React Native and Expo.** Run Metro in the workspace (`npx expo start` or `npx react-native start`, port 8081 or 19000) and start its forward from the menu. Then, in the iOS Simulator on this Mac, open the development build and give it `localhost:8081` (Expo's "Enter URL manually", or `exp://localhost:8081`). Metro builds the bundle URLs it hands out from the address it was asked on, which On-Demand's proxy has changed to the workspace's own name, so start it with the address you want the app to use:
+
+```sh
+REACT_NATIVE_PACKAGER_HOSTNAME=localhost npx expo start        # or: EXPO_PACKAGER_PROXY_URL=http://localhost:8081 npx expo start
+```
+
+If the app still fetches its bundle from the workspace's long name, the forward is not the problem: that name answers from this Mac too (tailnet), but without the relay's checks. Use the forward's number: if it fell to 8082, use `http://localhost:8082` and `EXPO_PACKAGER_PROXY_URL` to match.
+
+**A web dev server** (Vite, Next, webpack) on 3000, 5173 or 8080: forward it and open `http://localhost:5173`. Its own page may call it (same origin); a page from another port or site may not (the relay refuses it, see `SECURITY.md`), so point the browser at the forward and have the dev server serve the page and its API itself. A server that checks the `Host` it sees (Vite's `server.allowedHosts`) sees the workspace's name, not `localhost`: allow it there. Cookies are not carried through (every localhost port shares one jar), nor an `Authorization` header.
+
 ## What it does not do
 
 - It **deploys nothing** and has no way to.
-- It **holds no secret**: no token, key or password, and no address that is not public.
+- It **holds no secret**: no token, key or password, and no address that is not public. A forward carries no credential either: On-Demand knows you by the tailnet address.
 - It **changes nothing on the computer** in setup: it never runs Tailscale's `up`, `login`, `set` or anything else that changes it, installs nothing and signs nobody in. The download button only opens a web page.
 - It gives remote pages **no bridge** to the app, the computer or any device, lets only Oerba's own page (after a press, a few a minute) send a link to the browser, and cancels every download (see `SECURITY.md`).
 
@@ -89,13 +105,14 @@ A packaged app asks GitHub Releases for `latest-mac.yml` once the person is in, 
 - `src/policy/`: the shell's rules as small pure modules (navigation, permissions, external links), tested without Electron.
 - `src/setup/`: what the setup screen checks (`probes.ts`), how it reads `/api/who` (`who.ts`) and how the steps follow from it (`state.ts`).
 - `src/present/`: the menu bar, notifications and badge: reading `/api/now` (`now.ts`), what is worth a notification (`notify.ts`), the menu as data (`menu.ts`), routes (`routes.ts`), plain text (`text.ts`), and `presence.ts` wiring them to Electron.
+- `src/relay/`: the localhost forwards: the rules as pure functions (`rules.ts`), one forward's listeners (`forward.ts`) and the running ones (`manager.ts`).
 - `src/update/`: when to check, the update state, release notes as plain text, and the window.
 - `src/shell/hardening.ts`: wires the policies to Electron. `src/main.ts`: the window. `src/preload-setup.ts`: the setup page's three calls.
 - `static/`, `src/renderer/`: the setup screen's HTML, CSS (Oerba's Quiet Slate) and TypeScript.
 
 ## Stages
 
-Stage 1 was the shell and the setup screen; stage 3 the menu bar item, notifications, dock badge and shortcuts; stage 4 (this version, 0.3.0) packing, signing, notarising and updates that ask. Later: every workspace's pages kept open side by side, reaching the computer (forwarded ports, folders), and simulators. Each is its own stage.
+Stage 1 was the shell and the setup screen; stage 3 the menu bar item, notifications, dock badge and shortcuts; stage 4 packing, signing, notarising and updates that ask; stage 5 (this version, 0.4.0) a workspace's ports on the Mac's localhost. Later: every workspace's pages kept open side by side, reaching the computer (folders, and ports other than HTTP), and simulators. Each is its own stage.
 
 ## Licence
 
