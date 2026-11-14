@@ -11,6 +11,8 @@ export const UPSTREAM_SUFFIX = ".ondemand.oerba.dev";
 /** A DNS label made of a name On-Demand accepts (its own nameRegex: letters and digits, single hyphens inside). */
 const NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*(?![\s\S])/;
 
+const NAME_RAW = /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*(?![\s\S])/;
+
 /** The agent's name in a port's address. On-Demand refuses a port-shaped name without one ("agent name is required for port-based
     URLs", ondemandd/workspaceapps/appurl/appurl.go ParseSubdomainAppURL), and /api/now does not say it. Both of the lab's templates
     name their agent `main` (~/Workspaces/devserver/coder/templates/project/main.tf:289 and sandbox/main.tf:211), so a workspace
@@ -24,6 +26,9 @@ export const AGENT = "main";
 export function upstreamName(port: unknown, workspace: unknown, owner: unknown): string | null {
   if (typeof port !== "number" || !Number.isInteger(port) || port < 1024 || port > 65535) return null;
   if (typeof workspace !== "string" || typeof owner !== "string") return null;
+  // The shape is asked of the raw strings, ASCII only, before any case change: toLowerCase() turns U+212A (the Kelvin sign) into "k".
+  // On-Demand's own pattern allows capitals (appurl.go nameRegex) and a host name is not case-sensitive, so capitals are kept as valid and lowered after.
+  if (!NAME_RAW.test(workspace) || !NAME_RAW.test(owner)) return null;
   const w = workspace.toLowerCase(), o = owner.toLowerCase();
   if (!NAME.test(w) || !NAME.test(o)) return null;
   const label = `${port}--${AGENT}--${w}--${o}`;
@@ -58,13 +63,17 @@ export function originAllowed(origin: string | string[] | undefined, port: numbe
 
 /** Fetch Metadata, mirroring On-Demand's own rule (`identityAllowedFor`, ondemandd/httpmw/trustedidentity.go): none, same-origin and
     none-site pass; any other (cross-site, same-site, a value not known) only as a top-level GET or HEAD navigation to a document. */
-export function fetchSiteAllowed(headers: Headers, method: string, siblingOrigin = false): boolean {
+export function fetchSite(headers: Headers, method: string, siblingOrigin = false): "pass" | "navigation" | "refuse" {
   const site = one(headers["sec-fetch-site"]);
-  if (site === "" || site === "same-origin" || site === "none") return true;
-  // same-site from another of this app's forwards: only with an Origin that said so (the caller checked it), since the header alone does not say which port
-  if (site === "same-site" && siblingOrigin) return true;
-  return one(headers["sec-fetch-mode"]) === "navigate" && one(headers["sec-fetch-dest"]) === "document" && (method === "GET" || method === "HEAD");
+  // No Fetch Metadata at all (Metro, the Simulator, curl, a browser older than Chrome 76, Firefox 90 or Safari 16.4) passes: nothing tells it from a program.
+  if (site === "" || site === "same-origin" || site === "none") return "pass";
+  // same-site from a sibling forward of the same workspace: only with an Origin that said so (the caller checked it), since the header alone does not say which port
+  if (site === "same-site" && siblingOrigin) return "pass";
+  return one(headers["sec-fetch-mode"]) === "navigate" && one(headers["sec-fetch-dest"]) === "document" && (method === "GET" || method === "HEAD") ? "navigation" : "refuse";
 }
+
+/** Whether a request is not refused outright (a cross-site navigation is not, though the relay answers it with its own page). */
+export const fetchSiteAllowed = (headers: Headers, method: string, siblingOrigin = false): boolean => fetchSite(headers, method, siblingOrigin) !== "refuse";
 
 export type Verdict = { ok: true } | { ok: false; status: number; why: string };
 
@@ -72,9 +81,12 @@ export type Verdict = { ok: true } | { ok: false; status: number; why: string };
 export function vet(headers: Headers, method: string, url: string | undefined, port: number, forwarded: (n: number) => boolean = (n) => n === port): Verdict {
   if (!hostAllowed(headers["host"], port)) return { ok: false, status: 421, why: "host" };
   if (!originAllowed(headers["origin"], port, forwarded)) return { ok: false, status: 403, why: "origin" };
-  if (!fetchSiteAllowed(headers, method, headers["origin"] !== undefined)) return { ok: false, status: 403, why: "fetch-site" };
+  const site = fetchSite(headers, method, headers["origin"] !== undefined);
+  if (site === "refuse") return { ok: false, status: 403, why: "fetch-site" };
   // Origin-form only: "/path?query". An absolute address, "*" or an authority would make the relay name somewhere itself.
   if (typeof url !== "string" || !url.startsWith("/") || url.startsWith("//") || /[\u0000- \u007f]/.test(url)) return { ok: false, status: 400, why: "target" };
+  // A top-level navigation from another site is answered by the relay's own page, never forwarded: a dev server often changes state on a GET.
+  if (site === "navigation") return { ok: false, status: 200, why: "navigation" };
   return { ok: true };
 }
 
@@ -98,9 +110,10 @@ export function onDemandCookie(name: string): boolean {
     name === "ondemand_signed_app_token" || name.startsWith("ondemand_subdomain_app_session_token");
 }
 
-/** A Cookie header without On-Demand's own cookies, or null when nothing is left. */
-export function cookieUpstream(header: string): string | null {
-  const kept = header.split(";").map((p) => p.trim()).filter((p) => p !== "" && !onDemandCookie(p.split("=", 1)[0] ?? ""));
+/** A Cookie header cut to the names this workspace's forwards have set themselves, and without On-Demand's own; null when nothing is
+    left. So the session cookie of another program on another localhost port never reaches a workspace. */
+export function cookieUpstream(header: string, names: ReadonlySet<string>): string | null {
+  const kept = header.split(";").map((p) => p.trim()).filter((p) => { const n = p.split("=", 1)[0] ?? ""; return p !== "" && names.has(n) && !onDemandCookie(n); });
   return kept.length > 0 ? kept.join("; ") : null;
 }
 
@@ -119,13 +132,13 @@ export function neverSent(name: string): boolean {
 
 /** The headers that go upstream: everything the client sent but what is never sent, and any header the Connection header names;
     `Host` is the app's name. For an upgrade the caller adds `connection: upgrade` and `upgrade: websocket` back itself. */
-export function upstreamHeaders(incoming: Headers, name: string): Record<string, string | string[]> {
+export function upstreamHeaders(incoming: Headers, name: string, cookieNames: ReadonlySet<string> = new Set()): Record<string, string | string[]> {
   const named = new Set(one(incoming["connection"]).toLowerCase().split(",").map((s) => s.trim()).filter((s) => s !== ""));
   const out: Record<string, string | string[]> = {};
   for (const [k, v] of Object.entries(incoming)) {
     const key = k.toLowerCase();
     if (v === undefined || neverSent(key) || named.has(key)) continue;
-    if (key === "cookie") { const c = cookieUpstream(one(v)); if (c !== null) out[key] = c; continue; }
+    if (key === "cookie") { const c = cookieUpstream(one(v), cookieNames); if (c !== null) out[key] = c; continue; }
     out[key] = v;
   }
   out["host"] = name;
@@ -152,13 +165,13 @@ export function cleanPath(url: string): string {
 
 /** Response headers that go back to the page: hop-by-hop ones are dropped; Set-Cookie passes with its Domain
     removed (so it lands on localhost), except On-Demand's own. A redirect to the app's own name is turned back to the forward's address. */
-export function responseHeaders(raw: Headers, name: string, host: string): Record<string, string | string[]> {
+export function responseHeaders(raw: Headers, name: string, host: string, onCookie: (name: string) => void = () => undefined): Record<string, string | string[]> {
   const named = new Set(one(raw["connection"]).toLowerCase().split(",").map((s) => s.trim()).filter((s) => s !== ""));
   const out: Record<string, string | string[]> = {};
   for (const [k, v] of Object.entries(raw)) {
     const key = k.toLowerCase();
     if (v === undefined || HOP.has(key) || named.has(key) || key === "set-cookie2") continue;
-    if (key === "set-cookie") { const c = (Array.isArray(v) ? v : [v]).map(setCookieDown).filter((x): x is string => x !== null); if (c.length > 0) out[key] = c; continue; }
+    if (key === "set-cookie") { const c = (Array.isArray(v) ? v : [v]).map(setCookieDown).filter((x): x is string => x !== null); for (const line of c) onCookie((line.split(";", 1)[0] ?? "").split("=", 1)[0]!.trim()); if (c.length > 0) out[key] = c; continue; }
     out[key] = v;
   }
   const loc = out["location"];
@@ -189,4 +202,16 @@ export function loopbackUpstream(origin: string): Upstream | null {
   if (!m) return null;
   const port = Number(m[2]);
   return port > 0 && port < 65536 ? { target: () => ({ host: "127.0.0.1", port, secure: false }) } : null;
+}
+
+const esc = (t: string): string => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+/** The page a cross-site top-level navigation is answered with, in place of forwarding it. The link is a same-origin one to the same
+    path and query, so clicking it is a same-origin navigation, which passes. Nothing in it comes from upstream. */
+export function interstitial(port: number, pathAndQuery: string): string {
+  const shown = `localhost:${port}${pathAndQuery}`;
+  return `<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Oerba</title>
+<p>Opened from another site.</p>
+<p><a href="${esc(pathAndQuery)}" rel="noreferrer">Continue to ${esc(shown)}</a></p>
+`;
 }

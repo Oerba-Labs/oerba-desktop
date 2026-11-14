@@ -1,7 +1,7 @@
 /* The forwards that are running, one for each (owner, workspace, port). The menu starts and stops them; the poll of /api/now
    stops those whose workspace is no longer started; quitting stops all. */
 
-import { Forward } from "./forward";
+import { Forward, LIMITS } from "./forward";
 import { upstreamName, type Upstream } from "./rules";
 
 export interface ForwardInfo { id: string; owner: string; name: string; remote: number; local: number }
@@ -18,7 +18,13 @@ export class RelayManager {
   private readonly running = new Map<string, { info: ForwardInfo; fw: Forward }>();
   private readonly starting = new Set<string>();
 
-  constructor(private readonly upstream: Upstream, private readonly changed: () => void = () => undefined) {}
+  /** The cookie names each workspace's forwards have set, by owner and workspace. In memory only: gone when the app quits. */
+  private readonly jars = new Map<string, Set<string>>();
+
+  constructor(private readonly upstream: Upstream, private readonly changed: () => void = () => undefined, private readonly limits: Partial<typeof LIMITS> = {}) {}
+
+  /** What a forward's server allows at once (the tests read it). */
+  connectionLimit(id: string): number | undefined { return this.running.get(id)?.fw.connectionLimit(); }
 
   list(): ForwardInfo[] { return [...this.running.values()].map((r) => r.info); }
 
@@ -33,7 +39,12 @@ export class RelayManager {
     if (this.starting.has(id) || this.running.size + this.starting.size >= MAX_FORWARDS) return null;
     this.starting.add(id);
     try {
-      const fw = new Forward({ name: host, port: remote, upstream: this.upstream, forwarded: (n) => [...this.running.values()].some((r) => r.info.local === n) });
+      const ws = `${owner.toLowerCase()}/${name.toLowerCase()}`;
+      let jar = this.jars.get(ws);
+      if (!jar) { jar = new Set(); this.jars.set(ws, jar); }
+      // A page of one forward may call another of the same owner and workspace, and of no other.
+      const sibling = (n: number): boolean => [...this.running.values()].some((r) => r.info.local === n && `${r.info.owner.toLowerCase()}/${r.info.name.toLowerCase()}` === ws);
+      const fw = new Forward({ name: host, port: remote, upstream: this.upstream, sibling, cookies: jar, limits: this.limits });
       const taken = (n: number): boolean => [...this.running.values()].some((r) => r.info.local === n);
       let local: number;
       try { local = await fw.listen(remote, taken); } catch { await fw.close(); return null; }
@@ -64,5 +75,6 @@ export class RelayManager {
 
   async stopAll(): Promise<void> {
     await Promise.all([...this.running.keys()].map((id) => this.stop(id)));
+    this.jars.clear();
   }
 }

@@ -7,9 +7,22 @@ import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 import type { Duplex } from "node:stream";
-import { cleanPath, responseHeaders, upstreamHeaders, vet, type Upstream } from "./rules";
+import { cleanPath, interstitial, responseHeaders, upstreamHeaders, vet, type Upstream } from "./rules";
 
-export interface ForwardSpec { name: string; port: number; upstream: Upstream; /** Whether the app is forwarding this number on the Mac now. */ forwarded?: (n: number) => boolean }
+/** Limits of one forward. 256 connections each on 127.0.0.1 and ::1 is far above what one dev server's page opens (a browser holds six
+    per host; a bundler a few more), and low enough that a runaway local program cannot take the app's descriptors. A request waits
+    for upstream at most 15 s to connect; more than 96 in flight (32 sockets and about 64 waiting) answers 503. A websocket is
+    never cut for being idle: Metro's hot-reload socket lives as long as the editor. */
+export const LIMITS = { maxConnections: 256, connectMs: 15_000, maxInFlight: 96 };
+
+export interface ForwardSpec {
+  name: string; port: number; upstream: Upstream;
+  /** Whether the app is forwarding this number on the Mac now for the same owner and workspace (a page of it may call this forward). */
+  sibling?: (n: number) => boolean;
+  /** The cookie names this workspace's forwards have set, shared by them and kept in memory only. */
+  cookies?: Set<string>;
+  limits?: Partial<typeof LIMITS>;
+}
 
 const GONE = 502;
 
@@ -52,10 +65,25 @@ export class Forward {
   private readonly sockets = new Set<Duplex>();
   private readonly agent: https.Agent | http.Agent;
   private closed = false;
+  private inFlight = 0;
+  private readonly limits: typeof LIMITS;
 
   constructor(readonly spec: ForwardSpec) {
+    this.limits = { ...LIMITS, ...spec.limits };
     const t = spec.upstream.target(spec.name);
     this.agent = t.secure ? new https.Agent({ keepAlive: true, maxSockets: 32 }) : new http.Agent({ keepAlive: true, maxSockets: 32 });
+  }
+
+  connectionLimit(): number | undefined { return this.servers[0]?.maxConnections; }
+
+  /** Gives a request or upgrade to upstream a time to connect: if no connection is made in time it is 502. */
+  private guard(up: http.ClientRequest, secure: boolean, fail: () => void): void {
+    up.once("socket", (sock) => {
+      if (!sock.connecting) return;   // a kept connection
+      const timer = setTimeout(() => { fail(); up.destroy(); }, this.limits.connectMs);
+      sock.once(secure ? "secureConnect" : "connect", () => clearTimeout(timer));
+      up.once("close", () => clearTimeout(timer));
+    });
   }
 
   /** Listens on the wanted number if it is free on both loopback addresses, else the next free one, up to `span` numbers on. */
@@ -77,6 +105,7 @@ export class Forward {
 
   private make(): http.Server {
     const server = http.createServer({ requestTimeout: 0, headersTimeout: 30_000, maxHeaderSize: 32_768 }, (req, res) => this.request(req, res));
+    server.maxConnections = this.limits.maxConnections;
     server.on("upgrade", (req, socket, head) => this.upgrade(req, socket, head));
     server.on("connection", (s) => { this.sockets.add(s); s.once("close", () => this.sockets.delete(s)); });
     server.on("clientError", (_e, s) => { if (s.writable) s.end("HTTP/1.1 400 Bad Request\r\nconnection: close\r\n\r\n"); else s.destroy(); });
@@ -84,19 +113,29 @@ export class Forward {
   }
 
   private request(req: http.IncomingMessage, res: http.ServerResponse): void {
-    const v = vet(req.headers, req.method ?? "", req.url, this.port, (n) => n === this.port || (this.spec.forwarded?.(n) ?? false));
+    const v = vet(req.headers, req.method ?? "", req.url, this.port, (n) => n === this.port || (this.spec.sibling?.(n) ?? false));
+    if (!v.ok && v.why === "navigation") {
+      // From another site: the relay's own page, nothing forwarded, no cookie set, and nothing of upstream's in it.
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", "x-frame-options": "DENY", "content-security-policy": "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" });
+      res.end(req.method === "HEAD" ? undefined : interstitial(this.port, req.url ?? "/"));
+      return;
+    }
     if (!v.ok) { refuse(res, v.status, v.why); req.resume(); return; }
+    if (this.inFlight >= this.limits.maxInFlight) { res.setHeader("retry-after", "1"); refuse(res, 503, "too many requests at once"); req.resume(); return; }
+    this.inFlight++;
+    res.once("close", () => { this.inFlight--; });
     const { name } = this.spec;
     const t = this.spec.upstream.target(name);
-    const headers = upstreamHeaders(req.headers, name);
+    const headers = upstreamHeaders(req.headers, name, this.spec.cookies);
     const lib = t.secure ? https : http;
     const up = lib.request({ host: t.host, port: t.port, servername: t.secure ? name : undefined, method: req.method, path: cleanPath(req.url ?? "/"), headers, agent: this.agent, setHost: false } as https.RequestOptions, (ures) => {
-      const out = responseHeaders(ures.headers, name, String(req.headers["host"]));
+      const out = responseHeaders(ures.headers, name, String(req.headers["host"]), (c) => { const j = this.spec.cookies; if (j && j.size < 64 && c.length <= 128) j.add(c); });
       res.writeHead(ures.statusCode ?? GONE, ures.statusMessage, out);
       ures.pipe(res);
       ures.once("error", () => res.destroy());
     });
     up.once("error", () => refuse(res, GONE, "the workspace's name could not be reached"));
+    this.guard(up, t.secure, () => refuse(res, GONE, "the workspace's name did not answer in time"));
     res.once("close", () => { if (!up.destroyed && !res.writableFinished) up.destroy(); });
     req.once("error", () => up.destroy());
     req.pipe(up);
@@ -109,12 +148,12 @@ export class Forward {
       if (socket.writable) socket.end(`HTTP/1.1 ${status} ${status === 403 ? "Forbidden" : status === 421 ? "Misdirected Request" : status === 400 ? "Bad Request" : "Bad Gateway"}\r\ncontent-type: text/plain\r\nconnection: close\r\n\r\nrefused (${why})\n`);
       else socket.destroy();
     };
-    const v = vet(req.headers, req.method ?? "", req.url, this.port, (n) => n === this.port || (this.spec.forwarded?.(n) ?? false));
-    if (!v.ok) { stop(v.status, v.why); return; }
+    const v = vet(req.headers, req.method ?? "", req.url, this.port, (n) => n === this.port || (this.spec.sibling?.(n) ?? false));
+    if (!v.ok) { stop(v.why === "navigation" ? 403 : v.status, v.why); return; }
     if (String(req.headers["upgrade"] ?? "").toLowerCase() !== "websocket" || req.method !== "GET") { stop(400, "upgrade"); return; }
     const { name } = this.spec;
     const t = this.spec.upstream.target(name);
-    const headers = upstreamHeaders(req.headers, name);
+    const headers = upstreamHeaders(req.headers, name, this.spec.cookies);
     headers["connection"] = "Upgrade";
     headers["upgrade"] = "websocket";
     const lib = t.secure ? https : http;
@@ -124,7 +163,7 @@ export class Forward {
       this.sockets.add(usock);
       usock.once("close", () => { this.sockets.delete(usock); socket.destroy(); });
       socket.once("close", () => usock.destroy());
-      const out = responseHeaders(ures.headers, name, String(req.headers["host"]));
+      const out = responseHeaders(ures.headers, name, String(req.headers["host"]), (c) => { const j = this.spec.cookies; if (j && j.size < 64 && c.length <= 128) j.add(c); });
       out["connection"] = "Upgrade";
       out["upgrade"] = "websocket";
       const lines = Object.entries(out).flatMap(([k, val]) => (Array.isArray(val) ? val : [val]).map((x) => `${k}: ${x.replace(/[\r\n]/g, " ")}`));
@@ -137,12 +176,13 @@ export class Forward {
       usock.on("error", () => socket.destroy());
     });
     up.once("response", (ures) => {   // the workspace answered without upgrading: the answer goes back, headers cleaned
-      const out = responseHeaders(ures.headers, name, String(req.headers["host"]));
+      const out = responseHeaders(ures.headers, name, String(req.headers["host"]), (c) => { const j = this.spec.cookies; if (j && j.size < 64 && c.length <= 128) j.add(c); });
       const lines = Object.entries(out).flatMap(([k, val]) => (Array.isArray(val) ? val : [val]).map((x) => `${k}: ${x.replace(/[\r\n]/g, " ")}`));
       if (socket.writable) socket.write(`HTTP/1.1 ${ures.statusCode ?? GONE} ${String(ures.statusMessage ?? "").replace(/[\r\n]/g, " ")}\r\n${lines.join("\r\n")}\r\nconnection: close\r\n\r\n`);
       ures.pipe(socket);
     });
     up.once("error", () => stop(GONE, "the workspace's name could not be reached"));
+    this.guard(up, t.secure, () => stop(GONE, "the workspace's name did not answer in time"));
     socket.once("close", () => up.destroy());
     socket.on("error", () => up.destroy());
     up.end();
