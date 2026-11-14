@@ -26,7 +26,8 @@ function flag(argv: readonly string[], name: string): string | null {
 export function configFrom(argv: readonly string[], isPackaged: boolean): Config {
   const config: Config = { oerbaOrigin: OERBA_ORIGIN, selftest: false, otherOrigin: null, pollMs: 30_000, presentMs: null };
   // Both conditions, every time: a packaged app ignores every one of these flags, whatever it is given.
-  if (isPackaged || !argv.includes("--selftest")) return config;
+  // And in the packaged build the self-test is compiled out (__SELFTEST__ is false there), so these flags are not even in the code.
+  if (!__SELFTEST__ || isPackaged || !argv.includes("--selftest")) return config;
   config.selftest = true;
   const oerba = flag(argv, "oerba-origin");
   if (oerba !== null && LOOPBACK.test(oerba)) config.oerbaOrigin = oerba;

@@ -4,7 +4,7 @@
 
 import { contextBridge, ipcRenderer } from "electron";
 
-const bundled = location.protocol === "file:" && location.pathname.endsWith("/setup/setup.html") && window.top === window;
+const bundled = location.protocol === "oerba-app:" && location.host === "app" && location.pathname === "/setup/setup.html" && window.top === window;
 
 if (bundled) {
   contextBridge.exposeInMainWorld("oerbaSetup", {

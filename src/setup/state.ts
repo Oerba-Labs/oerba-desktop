@@ -31,6 +31,12 @@ export interface SetupState {
   note: string;
 }
 
+/** What the screen shows before the first look has come back: every step waiting, so the list is there at once. */
+export function checkingSetup(): SetupState {
+  const row = (id: Step["id"], title: string): Step => ({ id, title, status: "waiting", hint: "Checking…" });
+  return { steps: [row("installed", "Tailscale installed"), row("signed-in", "Signed in to Tailscale"), row("invited", "Invited to Oerba"), row("name", "Your name"), row("access", "Access asked for and approved")], ready: false, note: "" };
+}
+
 export function computeSetup(p: Probes): SetupState {
   const answered = p.oerba.answered;
   const who = p.oerba.who;

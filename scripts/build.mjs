@@ -1,22 +1,37 @@
-// Compiles the app with esbuild into dist/, and the tests beside it. Type errors are tsc's (npm run typecheck), not esbuild's.
+// Compiles the app with esbuild. Two bundles of the same source:
+//   dist/       the development bundle (npm start, npm test, npm run smoke), which holds the self-test;
+//   build/app/  the packaged bundle, which does not: __SELFTEST__ is false there, so the self-test and its flags are
+//               compiled out. electron-builder packs only this folder, so tests and scripts are never in the app.asar.
+// Type errors are tsc's (npm run typecheck), not esbuild's.
 import { build } from "esbuild";
-import { cpSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
-rmSync("dist", { recursive: true, force: true });
-mkdirSync("dist/setup", { recursive: true });
+const packaged = process.argv.includes("--app");
+const out = packaged ? "build/app" : "dist";
+rmSync(out, { recursive: true, force: true });
+mkdirSync(`${out}/setup`, { recursive: true });
+mkdirSync(`${out}/update`, { recursive: true });
 
-const common = { bundle: true, sourcemap: false, logLevel: "warning" };
+const common = { bundle: true, sourcemap: false, logLevel: "warning", define: { __SELFTEST__: packaged ? "false" : "true" }, legalComments: "none",
+  // In the packaged bundle, dead code goes (the self-test behind __SELFTEST__ === false): that needs esbuild to fold the constant, which it does when it simplifies syntax.
+  minifySyntax: packaged };
+const node = { platform: "node", format: "cjs", target: "node24", external: ["electron"] };
 
-await build({ ...common, entryPoints: ["src/main.ts"], outfile: "dist/main.js", platform: "node", format: "cjs", target: "node24", external: ["electron"] });
-await build({ ...common, entryPoints: ["src/preload-setup.ts"], outfile: "dist/preload-setup.js", platform: "node", format: "cjs", target: "node24", external: ["electron"] });
-await build({ ...common, entryPoints: ["src/renderer/setup.ts"], outfile: "dist/setup/setup.js", platform: "browser", format: "iife", target: "chrome140" });
+await build({ ...common, ...node, entryPoints: ["src/main.ts"], outfile: `${out}/main.js` });
+await build({ ...common, ...node, entryPoints: ["src/preload-setup.ts"], outfile: `${out}/preload-setup.js` });
+await build({ ...common, ...node, entryPoints: ["src/preload-update.ts"], outfile: `${out}/preload-update.js` });
+await build({ ...common, entryPoints: ["src/renderer/setup.ts"], outfile: `${out}/setup/setup.js`, platform: "browser", format: "iife", target: "chrome140" });
+await build({ ...common, entryPoints: ["src/renderer/update.ts"], outfile: `${out}/update/update.js`, platform: "browser", format: "iife", target: "chrome140" });
 
-const tests = readdirSync("test").filter((f) => f.endsWith(".test.ts")).map((f) => `test/${f}`);
-if (tests.length) {
-  await build({ ...common, entryPoints: tests, outdir: "dist/test", platform: "node", format: "cjs", target: "node22" });
+for (const [from, to] of [["setup.html", "setup/setup.html"], ["setup.css", "setup/setup.css"], ["update.html", "update/update.html"], ["update.css", "update/update.css"], ["trayTemplate.png", "trayTemplate.png"], ["trayTemplate@2x.png", "trayTemplate@2x.png"]]) {
+  cpSync(`static/${from}`, `${out}/${to}`);
 }
 
-cpSync("static/setup.html", "dist/setup/setup.html");
-cpSync("static/setup.css", "dist/setup/setup.css");
-cpSync("static/trayTemplate.png", "dist/trayTemplate.png");
-cpSync("static/trayTemplate@2x.png", "dist/trayTemplate@2x.png");
+if (packaged) {
+  // The packaged app's own package.json: no dependencies (electron-updater is bundled into main.js), no scripts.
+  const root = JSON.parse(readFileSync("package.json", "utf8"));
+  writeFileSync(`${out}/package.json`, JSON.stringify({ name: root.name, productName: "Oerba", version: root.version, description: root.description, main: "main.js", author: "Oerba Labs", license: root.license }, null, 2) + "\n");
+} else {
+  const tests = readdirSync("test").filter((f) => f.endsWith(".test.ts")).map((f) => `test/${f}`);
+  if (tests.length) await build({ ...common, entryPoints: tests, outdir: "dist/test", platform: "node", format: "cjs", target: "node22" });
+}

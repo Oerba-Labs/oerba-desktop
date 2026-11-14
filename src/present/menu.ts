@@ -8,6 +8,7 @@ export type Action =
   | { type: "route"; route: string }
   | { type: "palette" }
   | { type: "login"; checked: boolean }
+  | { type: "update" }
   | { type: "quit" };
 
 export interface MenuItem {
@@ -27,6 +28,8 @@ export interface MenuInput {
   /** Whether each global shortcut was free and registered. */
   paletteKey: boolean;
   chatKey: boolean;
+  /** A version waiting to be offered, or null. */
+  update: string | null;
 }
 
 const SEP: MenuItem = { label: "", kind: "separator" };
@@ -35,6 +38,7 @@ const STARTED = /^(running|starting|pending)$/;
 
 export function buildMenu(i: MenuInput): MenuItem[] {
   const items: MenuItem[] = [{ label: "Open Oerba", action: { type: "open" } }];
+  if (i.update !== null) items.push({ label: `Update to ${i.update}…`, action: { type: "update" } });
   if (i.inOerba) {
     items.push(SEP);
     const started = (i.now?.workspaces ?? []).filter((w) => STARTED.test(w.status));

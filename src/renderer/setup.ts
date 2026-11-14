@@ -1,5 +1,7 @@
 /* The setup screen. Every word that came from the main process is set with textContent, never innerHTML. */
 
+export {};
+
 interface Step { id: string; title: string; status: "done" | "next" | "waiting" | "ask"; hint: string; action?: string }
 interface State { steps: Step[]; ready: boolean; note: string }
 interface Bridge {

@@ -34,6 +34,8 @@ export function hardenSession(ses: Session, policy: NavPolicy): void {
     return ok;
   });
   ses.setDevicePermissionHandler(() => { refusals.push("device"); return deviceAllowed(); });
+  // Nobody records the screen or a window: a display-media request is answered with no source.
+  ses.setDisplayMediaRequestHandler((_request, callback) => { refusals.push("display-media"); callback({}); });
   // No downloads in any session until a stage needs them.
   ses.on("will-download", (event) => { event.preventDefault(); refusals.push("download"); });
   // A device chooser is a person's act on Oerba's own screens, and stage 1 has none: choose nothing.

@@ -1,13 +1,15 @@
 /* Where a page of the shell may go. Pure: no Electron, so a test can ask it anything. */
 
 /** What a web contents is for: the bundled setup page, Oerba's live pages, or (the self-test's stand-in) a stranger. */
-export type Role = "setup" | "oerba" | "other";
+export type Role = "setup" | "update" | "oerba" | "other";
 
 export interface NavPolicy {
   /** Oerba's origin: https://app.oerba.dev, or a loopback one under the self-test. */
   oerbaOrigin: string;
-  /** The bundled setup page's file URL, exactly. */
+  /** The bundled setup page's address (oerba-app://app/setup/setup.html), exactly. */
   setupUrl: string;
+  /** The bundled update window's page, exactly. */
+  updateUrl: string;
 }
 
 function parse(url: string): URL | null {
@@ -17,11 +19,14 @@ function parse(url: string): URL | null {
 const plain = (u: URL): boolean => u.username === "" && u.password === "";
 
 /** Whether a URL is the bundled setup page itself; a query or fragment is not part of what is compared. */
-export function isSetupPage(url: string, policy: NavPolicy): boolean {
+export function isBundledPage(url: string, bundledUrl: string): boolean {
   const u = parse(url);
-  const s = parse(policy.setupUrl);
-  return u !== null && s !== null && u.protocol === "file:" && u.host === "" && u.pathname === s.pathname;
+  const s = parse(bundledUrl);
+  return u !== null && s !== null && u.protocol === s.protocol && u.host === s.host && u.pathname === s.pathname && u.username === "" && u.password === "";
 }
+
+export const isSetupPage = (url: string, policy: NavPolicy): boolean => isBundledPage(url, policy.setupUrl);
+export const isUpdatePage = (url: string, policy: NavPolicy): boolean => isBundledPage(url, policy.updateUrl);
 
 /** Whether a URL is Oerba's own: its origin, no credentials in the address. */
 export function isOerbaPage(url: string, policy: NavPolicy): boolean {
@@ -40,6 +45,7 @@ export function isOerbaFrame(url: string, policy: NavPolicy): boolean {
 /** The main frame of the setup view may only be the setup page; of Oerba's view, only Oerba. A stranger's goes nowhere. */
 export function mainFrameAllowed(url: string, role: Role, policy: NavPolicy): boolean {
   if (role === "setup") return isSetupPage(url, policy);
+  if (role === "update") return isUpdatePage(url, policy);
   if (role === "oerba") return isOerbaPage(url, policy);
   return false;
 }
@@ -70,4 +76,9 @@ export function openDecision(url: string): { action: "deny"; external: string | 
 /** Whether an IPC message came from the bundled setup page's own top frame. */
 export function isSetupSender(frameUrl: string | undefined, isTopFrame: boolean, policy: NavPolicy): boolean {
   return isTopFrame && frameUrl !== undefined && isSetupPage(frameUrl, policy);
+}
+
+/** Whether an IPC message came from the bundled update window's own top frame. */
+export function isUpdateSender(frameUrl: string | undefined, isTopFrame: boolean, policy: NavPolicy): boolean {
+  return isTopFrame && frameUrl !== undefined && isUpdatePage(frameUrl, policy);
 }

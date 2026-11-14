@@ -126,15 +126,15 @@ test("a workspace's route is encoded, and an odd name has none", () => {
 });
 
 test("the menu: an owner's has everything, a developer's has no waiting entry, and before setup is done only the basics", () => {
-  const owner = labelsOf(buildMenu({ inOerba: true, now: model({ workspaces: [{ owner: "alice", name: "demo", status: "running" }, { owner: "alice", name: "off", status: "stopped" }], needs: [need("a")] }), loginItem: false, paletteKey: true, chatKey: true }));
+  const owner = labelsOf(buildMenu({ inOerba: true, now: model({ workspaces: [{ owner: "alice", name: "demo", status: "running" }, { owner: "alice", name: "off", status: "stopped" }], needs: [need("a")] }), loginItem: false, paletteKey: true, chatKey: true, update: null }));
   assert.deepEqual(owner, ["Open Oerba", "Workspaces", "  demo", "Waiting on you (1)", "New chat", "Switch workspace…", "Open at login", "Quit Oerba"]);
-  const dev = labelsOf(buildMenu({ inOerba: true, now: model({ isOwner: false }), loginItem: false, paletteKey: true, chatKey: true }));
+  const dev = labelsOf(buildMenu({ inOerba: true, now: model({ isOwner: false }), loginItem: false, paletteKey: true, chatKey: true, update: null }));
   assert.equal(dev.some((l) => l.startsWith("Waiting")), false);
-  assert.deepEqual(labelsOf(buildMenu({ inOerba: false, now: null, loginItem: false, paletteKey: true, chatKey: true })), ["Open Oerba", "Open at login", "Quit Oerba"]);
+  assert.deepEqual(labelsOf(buildMenu({ inOerba: false, now: null, loginItem: false, paletteKey: true, chatKey: true, update: null })), ["Open Oerba", "Open at login", "Quit Oerba"]);
 });
 
 test("a shortcut another app holds is said in the menu, not as an error; the login item changes nothing until ticked", () => {
-  const items = buildMenu({ inOerba: true, now: null, loginItem: true, paletteKey: false, chatKey: false });
+  const items = buildMenu({ inOerba: true, now: null, loginItem: true, paletteKey: false, chatKey: false, update: null });
   const labels = labelsOf(items);
   assert.ok(labels.includes("⌥Space is used by another app") && labels.includes("⌥⇧Space is used by another app"));
   const login = items.find((i) => i.kind === "checkbox")!;

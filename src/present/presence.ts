@@ -19,6 +19,9 @@ export interface Deps {
   show(): void;
   openRoute(route: string): void;
   palette(): void;
+  openUpdate(): void;
+  /** The person is in: the updater may start asking. */
+  onIn(): void;
   quit(): void;
 }
 
@@ -45,6 +48,7 @@ export class Presence {
   private running = false;
   private keys = { palette: false, chat: false };
   menu: MenuItem[] = [];
+  private update: string | null = null;
 
   constructor(private readonly d: Deps) {}
 
@@ -64,6 +68,7 @@ export class Presence {
   setIn(): void {
     if (this.inOerba) return;
     this.inOerba = true;
+    this.d.onIn();
     this.render();
     this.running = true;
     void this.cycle();
@@ -112,9 +117,12 @@ export class Presence {
   }
 
   private render(): void {
-    this.menu = buildMenu({ inOerba: this.inOerba, now: this.now, loginItem: app.getLoginItemSettings().openAtLogin, paletteKey: this.keys.palette, chatKey: this.keys.chat });
+    this.menu = buildMenu({ inOerba: this.inOerba, now: this.now, loginItem: app.getLoginItemSettings().openAtLogin, paletteKey: this.keys.palette, chatKey: this.keys.chat, update: this.update });
     this.tray?.setContextMenu(Menu.buildFromTemplate(this.menu.map((m) => this.toNative(m))));
   }
+
+  /** An update is waiting (its version, already checked to be plain), or none. */
+  setUpdate(version: string | null): void { this.update = version; this.render(); }
 
   labels(): string[] { return labelsOf(this.menu); }
 
@@ -132,6 +140,7 @@ export class Presence {
     if (a.type === "open") this.d.show();
     else if (a.type === "route") this.d.openRoute(a.route);
     else if (a.type === "palette") this.d.palette();
+    else if (a.type === "update") this.d.openUpdate();
     else if (a.type === "login") app.setLoginItemSettings({ openAtLogin: checked });   // only when the person ticks it
     else this.d.quit();
   }

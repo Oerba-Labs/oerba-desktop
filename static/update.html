@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Oerba update</title>
+<link rel="stylesheet" href="update.css">
+</head>
+<body>
+<main>
+  <h1 id="title">Checking…</h1>
+  <p class="label">What changed</p>
+  <pre id="notes" class="notes"></pre>
+  <p id="status" class="status"></p>
+  <div class="row">
+    <button id="later" type="button">Later</button>
+    <button id="primary" type="button" class="primary" hidden>Download</button>
+  </div>
+</main>
+<script src="update.js"></script>
+</body>
+</html>

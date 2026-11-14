@@ -1,27 +1,27 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { externalTarget, isSetupSender, navigationAllowed, openDecision, type NavPolicy } from "../src/policy/navigation";
+import { externalTarget, isSetupSender, isUpdateSender, navigationAllowed, openDecision, type NavPolicy, type Role } from "../src/policy/navigation";
 
-const policy: NavPolicy = { oerbaOrigin: "https://app.oerba.dev", setupUrl: "file:///opt/app/dist/setup/setup.html" };
-const main = (url: string, role: "setup" | "oerba" | "other" = "oerba") => navigationAllowed(url, true, role, policy);
-const sub = (url: string, role: "setup" | "oerba" | "other" = "oerba") => navigationAllowed(url, false, role, policy);
+const policy: NavPolicy = { oerbaOrigin: "https://app.oerba.dev", setupUrl: "oerba-app://app/setup/setup.html", updateUrl: "oerba-app://app/update/update.html" };
+const main = (url: string, role: Role = "oerba") => navigationAllowed(url, true, role, policy);
+const sub = (url: string, role: Role = "oerba") => navigationAllowed(url, false, role, policy);
 
 test("Oerba's view may go to app.oerba.dev only, in its main frame", () => {
   assert.equal(main("https://app.oerba.dev/"), true);
   assert.equal(main("https://app.oerba.dev/apps/x?y=1#z"), true);
   for (const bad of [
     "https://oerba.dev/", "https://other.oerba.dev/", "https://app.oerba.dev.evil.example/", "https://evil.example/app.oerba.dev",
-    "http://app.oerba.dev/", "https://app.oerba.dev:8443/", "https://user:pw@app.oerba.dev/", "file:///etc/passwd",
+    "http://app.oerba.dev/", "https://app.oerba.dev:8443/", "https://user:pw@app.oerba.dev/", "file:///etc/passwd", "oerba-app://app/setup/setup.html", "oerba-app://other/setup/setup.html",
     "javascript:alert(1)", "data:text/html,hi", "about:blank", "not a url", "",
   ]) assert.equal(main(bad), false, bad);
 });
 
 test("the setup view may be the bundled page and nothing else, and Oerba's view may not be it", () => {
-  assert.equal(main("file:///opt/app/dist/setup/setup.html", "setup"), true);
-  assert.equal(main("file:///opt/app/dist/setup/setup.html?x=1", "setup"), true);
-  assert.equal(main("file:///opt/app/dist/setup/other.html", "setup"), false);
+  assert.equal(main("oerba-app://app/setup/setup.html", "setup"), true);
+  assert.equal(main("oerba-app://app/setup/setup.html?x=1", "setup"), true);
+  assert.equal(main("oerba-app://app/setup/other.html", "setup"), false);
   assert.equal(main("https://app.oerba.dev/", "setup"), false);
-  assert.equal(main("file:///opt/app/dist/setup/setup.html", "oerba"), false);
+  assert.equal(main("oerba-app://app/setup/setup.html", "oerba"), false);
 });
 
 test("a stranger's contents may go nowhere", () => {
@@ -60,8 +60,20 @@ test("window.open never makes a window, and names the browser only for https", (
 });
 
 test("an IPC message counts only from the setup page's top frame", () => {
-  assert.equal(isSetupSender("file:///opt/app/dist/setup/setup.html", true, policy), true);
-  assert.equal(isSetupSender("file:///opt/app/dist/setup/setup.html", false, policy), false);
+  assert.equal(isSetupSender("oerba-app://app/setup/setup.html", true, policy), true);
+  assert.equal(isSetupSender("oerba-app://app/setup/setup.html", false, policy), false);
   assert.equal(isSetupSender("https://app.oerba.dev/", true, policy), false);
   assert.equal(isSetupSender(undefined, true, policy), false);
+});
+
+test("the update window may be its bundled page and nothing else, and no other view may be it", () => {
+  assert.equal(main("oerba-app://app/update/update.html", "update"), true);
+  assert.equal(main("oerba-app://app/setup/setup.html", "update"), false);
+  assert.equal(main("https://app.oerba.dev/", "update"), false);
+  assert.equal(main("oerba-app://app/update/update.html", "setup"), false);
+  assert.equal(main("oerba-app://app/update/update.html", "oerba"), false);
+  assert.equal(sub("https://x.oerba.dev/", "update"), false);
+  assert.equal(isUpdateSender("oerba-app://app/update/update.html", true, policy), true);
+  assert.equal(isUpdateSender("oerba-app://app/update/update.html", false, policy), false);
+  assert.equal(isUpdateSender("oerba-app://app/setup/setup.html", true, policy), false);
 });

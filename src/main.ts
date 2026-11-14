@@ -5,15 +5,18 @@ import { app, BrowserWindow, dialog, ipcMain, net, shell, WebContentsView, type 
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { SETUP_URL, UPDATE_URL } from "./policy/bundled";
+import { declareBundledScheme, serveBundled } from "./shell/protocol";
 import { configFrom, TAILSCALE_DOWNLOAD } from "./config";
 import { unexpectedSwitches } from "./policy/argv";
 import { isSetupSender, type NavPolicy } from "./policy/navigation";
 import { probeAll, type FetchLike, type RunStatus } from "./setup/probes";
-import { computeSetup, type SetupState } from "./setup/state";
+import { checkingSetup, computeSetup, type SetupState } from "./setup/state";
 import { isOerbaPage } from "./policy/navigation";
 import { safeRoute } from "./present/routes";
 import { Presence } from "./present/presence";
+import { realEngine, Updater, type Engine } from "./update/updater";
+import { UpdateWindow } from "./update/window";
 import type { PresentFetch } from "./present/fetch";
 import { installHardening, setRole } from "./shell/hardening";
 
@@ -27,9 +30,17 @@ if (app.isPackaged) {
   }
 }
 
+// Every renderer is sandboxed, whatever its own settings say.
+app.enableSandbox();
+
 const config = configFrom(process.argv, app.isPackaged);
-const setupPath = path.join(__dirname, "setup", "setup.html");
-const policy: NavPolicy = { oerbaOrigin: config.oerbaOrigin, setupUrl: pathToFileURL(setupPath).href };
+
+// One instance. A second launch only shows the first one's window, and its arguments are never read. (The self-test runs
+// beside any other copy, so it does not take the lock.)
+if (!config.selftest && !app.requestSingleInstanceLock()) app.exit(0);
+app.on("second-instance", () => { showWindow(); });
+const policy: NavPolicy = { oerbaOrigin: config.oerbaOrigin, setupUrl: SETUP_URL, updateUrl: UPDATE_URL };
+declareBundledScheme();
 
 /** The settings every view gets. A remote page's has no preload, no Node and no <webview>. */
 const SAFE: WebPreferences = {
@@ -40,7 +51,7 @@ const SAFE: WebPreferences = {
 let win: BrowserWindow | null = null;
 let setupView: WebContentsView | null = null;
 let oerbaView: WebContentsView | null = null;
-let current: SetupState | null = null;
+let current: SetupState | null = checkingSetup();
 let timer: NodeJS.Timeout | null = null;
 let polling = false;
 
@@ -52,6 +63,14 @@ const fetchFn: FetchLike = (url, init) => net.fetch(url, init);
 const presentFetch: PresentFetch = (url, init) => net.fetch(url, init);
 let quitting = false;
 let presence: Presence | null = null;
+// electron-updater's own engine, whose feed is the one the build wrote. Only the self-test may put another in its place.
+let testEngine: Engine | null = null;
+const updater = new Updater(
+  () => (testEngine ? Promise.resolve(testEngine) : realEngine()),
+  () => ({ packaged: app.isPackaged || testEngine !== null, selftest: config.selftest && testEngine === null, inOerba: oerbaView !== null }),
+  (s) => { presence?.setUpdate(s.phase === "none" ? null : s.version); updateWindow?.push(); },
+);
+let updateWindow: UpdateWindow | null = null;
 
 function fit(view: WebContentsView): void {
   if (!win) return;
@@ -77,7 +96,21 @@ function showSetup(): void {
     setRole(setupView.webContents, "setup");
     win.contentView.addChildView(setupView);
     fit(setupView);
-    void setupView.webContents.loadURL(policy.setupUrl);
+    // What the window did is said on the process's own output, for whoever runs the packaged app from a terminal.
+    const sv = setupView.webContents;
+    sv.on("did-fail-load", (_e, code, desc) => { console.error(`oerba: the setup page failed to load (${code} ${desc})`); });
+    sv.on("did-finish-load", () => {
+      // The page's script draws the steps just after it loads; look for a moment before saying how many.
+      const look = (left: number): void => {
+        if (sv.isDestroyed()) return;
+        void sv.executeJavaScript("document.querySelectorAll('#steps li').length").then((n) => {
+          if (Number(n) > 0 || left === 0) console.log(`oerba: the setup screen drew ${String(n)} steps`);
+          else setTimeout(() => look(left - 1), 100);
+        }, () => { /* gone */ });
+      };
+      look(20);
+    });
+    void sv.loadURL(policy.setupUrl);
   }
   presence?.setOut();
   startPolling();
@@ -163,18 +196,20 @@ ipcMain.handle("setup:act", async (event, action: unknown) => {
 });
 
 app.whenReady().then(() => {
+  serveBundled(__dirname);
   installHardening(policy);
-  presence = new Presence({ oerbaOrigin: config.oerbaOrigin, fetchFn: presentFetch, intervalMs: config.presentMs, windowShown: () => !!win && win.isVisible() && !win.isMinimized(), show: showWindow, openRoute, palette: openPalette, quit: () => app.quit() });
+  presence = new Presence({ oerbaOrigin: config.oerbaOrigin, fetchFn: presentFetch, intervalMs: config.presentMs, windowShown: () => !!win && win.isVisible() && !win.isMinimized(), show: showWindow, openRoute, palette: openPalette, openUpdate: () => updateWindow?.show(), onIn: () => updater.start(), quit: () => app.quit() });
   presence.start();
+  updateWindow = new UpdateWindow(policy, SAFE, updater, config.selftest);
   win = createWindow();
   showSetup();
-  if (config.selftest) {
+  if (__SELFTEST__ && config.selftest) {
     // Loaded only for an unpackaged app given --selftest (config.ts): the self-test is not in the packaged code path.
-    void import("./selftest").then((m) => m.runSelftest({ config, policy, getWin: () => win, getSetup: () => setupView, getOerba: () => oerbaView, getPresence: () => presence, SAFE, fit }));
+    void import("./selftest").then((m) => m.runSelftest({ config, policy, getWin: () => win, getSetup: () => setupView, getOerba: () => oerbaView, getPresence: () => presence, getUpdater: () => updater, getUpdateWindow: () => updateWindow, setEngine: (e) => { testEngine = e; }, SAFE, fit }));
   }
   app.on("activate", () => { if (!win) { win = createWindow(); showSetup(); } else showWindow(); });
 });
 
 app.on("before-quit", () => { quitting = true; });
-app.on("will-quit", () => { presence?.stop(); });
+app.on("will-quit", () => { presence?.stop(); updater.stop(); });
 app.on("window-all-closed", () => { /* the menu bar item keeps the app running */ });

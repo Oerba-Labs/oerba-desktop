@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeSetup, type Probes } from "../src/setup/state";
+import { checkingSetup, computeSetup, type Probes } from "../src/setup/state";
 import { readWho } from "../src/setup/who";
 
 const who = (o: object) => readWho(o);
@@ -74,4 +74,11 @@ test("an approval seen on a later look lets them in: the same person, asked agai
   const later = computeSetup(probes({ oerba: { answered: true, who: who({ handle: "ada", person: "member" }) } }));
   assert.equal(first.ready, false);
   assert.equal(later.ready, true);
+});
+
+test("before the first look the list is there, every step waiting, and nothing is ready", () => {
+  const s = checkingSetup();
+  assert.equal(s.steps.length, 5);
+  assert.equal(s.ready, false);
+  assert.equal(s.steps.every((x) => x.status === "waiting" && x.hint === "Checking…"), true);
 });

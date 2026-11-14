@@ -5,6 +5,8 @@ import { app, BrowserWindow, type WebContentsView, type WebPreferences } from "e
 import type { Config } from "./config";
 import type { NavPolicy } from "./policy/navigation";
 import type { Presence } from "./present/presence";
+import type { Engine, Updater } from "./update/updater";
+import type { UpdateWindow } from "./update/window";
 import { sink } from "./present/presence";
 import type { Item } from "./present/notify";
 import { external, refusals, setRole } from "./shell/hardening";
@@ -16,6 +18,9 @@ export interface Hooks {
   getSetup(): WebContentsView | null;
   getOerba(): WebContentsView | null;
   getPresence(): Presence | null;
+  getUpdater(): Updater;
+  getUpdateWindow(): UpdateWindow | null;
+  setEngine(e: Engine): void;
   SAFE: WebPreferences;
   fit(view: WebContentsView): void;
 }
@@ -66,6 +71,8 @@ export async function runSelftest(h: Hooks): Promise<void> {
     const geo = await stranger.webContents.executeJavaScript("new Promise((r) => navigator.geolocation.getCurrentPosition(() => r('granted'), (e) => r('refused ' + e.code)))", true);
     check("a geolocation request was refused", String(geo).startsWith("refused"), String(geo));
     check("the refusals were seen by the handlers", refusals.has("serial") && refusals.has("geolocation"), refusals.list.join(" "));
+    const media = await stranger.webContents.executeJavaScript("navigator.mediaDevices.getDisplayMedia({ video: true }).then(() => 'granted', (e) => 'refused ' + e.name)", true);
+    check("a screen-recording request was refused", String(media).startsWith("refused"), String(media));
     stranger.destroy();
 
     // 3. Oerba answers, and the setup screen lets the person in by itself.
@@ -101,12 +108,44 @@ export async function runSelftest(h: Hooks): Promise<void> {
     await presence.refresh();
     check("reading the same answer again made none more", notes.length === 3);
 
+    // 4c. An update, offered by a stand-in for electron-updater: the menu item, the window, Download and Restart.
+    const calls: string[] = [];
+    const handlers: Record<string, (x?: unknown) => void> = {};
+    const fake: Engine = {
+      checkForUpdates: async () => { calls.push("check"); handlers["update-available"]?.({ version: "9.9.9", releaseNotes: "<h2>What\u2019s new</h2><ul><li>One &amp; two</li></ul><script>alert(1)</script><img src=x onerror=alert(2)>" }); },
+      downloadUpdate: async () => { calls.push("download"); handlers["download-progress"]?.({ percent: 50 }); handlers["update-downloaded"]?.(); },
+      quitAndInstall: () => { calls.push("install"); },
+      on: ((event: string, cb: (x?: unknown) => void) => { handlers[event] = cb; }) as Engine["on"],
+    };
+    h.setEngine(fake);
+    await h.getUpdater().check();
+    await until("the update item in the menu", () => presence.labels().includes("Update to 9.9.9…"));
+    check("an update found put 'Update to 9.9.9…' in the menu", true);
+    check("nothing was downloaded or installed by finding it", calls.join() === "check", calls.join());
+    h.getUpdateWindow()?.show();
+    const uw = await until("the update window", () => h.getUpdateWindow()?.window);
+    await until("the update page", () => !uw.webContents.isLoading() && uw.webContents.getURL() === h.policy.updateUrl);
+    const shown = (await until("the update text", () => uw.webContents.executeJavaScript("document.getElementById('notes').textContent"))) as string;
+    check("the notes show as plain text, with no markup run", shown.includes("• One & two") && !shown.includes("<") && !shown.includes("alert"), JSON.stringify(shown));
+    const made = await uw.webContents.executeJavaScript("document.querySelectorAll('img').length + ',' + document.querySelectorAll('script').length");
+    check("the update page holds no element made from the notes", made === "0,1", String(made));   // its own script tag alone
+    await uw.webContents.executeJavaScript("document.getElementById('primary').click()", true);
+    await until("the download", () => calls.includes("download"));
+    check("Download downloaded and did not install", !calls.includes("install"), calls.join());
+    await until("Restart now offered", () => uw.webContents.executeJavaScript("document.getElementById('primary').textContent === 'Restart now'"));
+    await uw.webContents.executeJavaScript("document.getElementById('primary').click()", true);
+    await until("the install", () => calls.includes("install"));
+    check("Restart now installed, after its own press", calls.join() === "check,download,install", calls.join());
+    uw.close();
+
     // 5. Links out. Opening the browser is replaced by a recorder, so nothing real opens.
     const opened: string[] = [];
     const realOpen = external.open;
     external.open = (url) => { opened.push(url); };
     try {
-      await oerba.webContents.loadURL(`${h.policy.oerbaOrigin}/gate`);
+      // The frame inside the page may try to send the page away while it loads, which aborts that load's promise: the page is read, not the promise.
+      await oerba.webContents.loadURL(`${h.policy.oerbaOrigin}/gate`).catch(() => undefined);
+      await until("the gate page", () => oerba.webContents.getURL() === `${h.policy.oerbaOrigin}/gate`);
       await sleep(1500);   // the frame inside the page tries window.open and window.top.location, three times each
       check("a frame inside Oerba's page opened nothing in the browser", opened.length === 0, opened.join(" "));
       check("and its attempts were recorded as refused", refusals.has("linkout:origin") || refusals.has("navigate:main"), refusals.list.slice(-6).join(" "));
@@ -117,7 +156,7 @@ export async function runSelftest(h: Hooks): Promise<void> {
       await sleep(300);
       check("a call of Oerba's own page with no press opened nothing", opened.length === before2, opened.join(" "));
 
-      h.getWin()?.showInactive();   // synthetic presses are not delivered to a window that was never shown
+      h.getWin()?.show(); h.getWin()?.focus();   // synthetic presses are not delivered to a window that was never shown
       oerba.webContents.focus();
       await sleep(500);
       const click = async (id: string): Promise<void> => {

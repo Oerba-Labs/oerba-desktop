@@ -1,0 +1,31 @@
+/* The values are Oerba's Quiet Slate tokens, copied from Oerba's own stylesheet, light and dark. Geist is not bundled here; the system face stands in until the app ships fonts. */
+:root {
+  --ground: #F6F7F9;  --surface: #FFFFFF;  --sunk: #EEF0F3;  --rule: #E3E6EB;
+  --ink: #12141A;  --ink2: #3A4150;  --muted: #596071;
+  --accent: #3451D1;  --onacc: #FFFFFF;  --accent-soft: #E9EDFC;
+  --done: #17703F;  --done-soft: #E6F4EC;
+  --warn: #8A5200;  --warn-soft: #FCF0DA;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --radius: 6px;  --radius-lg: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #0C0E12;  --surface: #14171C;  --sunk: #1B1F26;  --rule: #262B34;
+    --ink: #ECEEF2;  --ink2: #C5CAD4;  --muted: #9CA4B3;
+    --accent: #8EA2FF;  --onacc: #0C0E12;  --accent-soft: #1A2142;
+    --done: #5ECB8A;  --done-soft: #11261A;
+    --warn: #E8AE55;  --warn-soft: #2A2010;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 14px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+main { padding: 24px; display: flex; flex-direction: column; height: 100vh; }
+h1 { font-size: 18px; font-weight: 600; margin: 0 0 12px; }
+.label { color: var(--muted); font-size: 12px; margin: 0 0 4px; }
+.notes { flex: 1; overflow: auto; margin: 0; padding: 10px 12px; background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); font: inherit; white-space: pre-wrap; word-break: break-word; }
+.status { color: var(--ink2); min-height: 1.5em; margin: 10px 0 0; }
+.row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+button { font: inherit; cursor: pointer; border-radius: var(--radius); border: 1px solid var(--rule); padding: 6px 14px; background: var(--surface); color: var(--ink); }
+button.primary { background: var(--accent); color: var(--onacc); border-color: var(--accent); }
+button[hidden] { display: none; }
+button:disabled { opacity: 0.6; cursor: default; }
