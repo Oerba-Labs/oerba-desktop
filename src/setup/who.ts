@@ -1,4 +1,4 @@
-/* Reading /api/who. Only keys of console/clients.json's contract for Oerba Desktop are relied on for the name
+/* Reading /api/who. Only keys of Oerba's published client contract are relied on for the name
    (`handle`, `github`); `known`, `person` and `may_act` are read as hints, and absent or odd values count as unknown. */
 
 export interface Who {

@@ -1,5 +1,4 @@
-/* The values are Oerba's Quiet Slate, copied from the lab's fburl/static/tokens.css (design/tokens.css, the oerba lists),
-   light and dark. Geist is not bundled here; the system face stands in until the app ships fonts. */
+/* The values are Oerba's Quiet Slate tokens, copied from Oerba's own stylesheet, light and dark. Geist is not bundled here; the system face stands in until the app ships fonts. */
 :root {
   --ground: #F6F7F9;  --surface: #FFFFFF;  --sunk: #EEF0F3;  --rule: #E3E6EB;
   --ink: #12141A;  --ink2: #3A4150;  --muted: #596071;

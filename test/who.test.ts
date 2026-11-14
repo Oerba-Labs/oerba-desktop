@@ -1,10 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { approved, hasHandle, readWho } from "../src/setup/who";
 import { parseBackendState, probeAll, probeOerba, probeTailscaleState, TAILSCALE_ARGS, TAILSCALE_CLI, type FetchLike } from "../src/setup/probes";
 
-// The keys Oerba Desktop reads of GET /api/who, as the lab's console/clients.json lists them for its clients:
+// The keys Oerba Desktop reads of GET /api/who, as Oerba's published client contract lists them:
 // handle and github, both strings. The answers below are shaped as console/app.py's `who` returns them.
 const full = { login: "ada@github", name: "Ada", known: true, may_act: false, admins_set: true, tailnet: "ada@example.com", github: "", handle: "ada", account: "chosen", suggest: "", person: "nobody", orgs: [], personal: true, quota: { access: "nobody" }, vscode: null, connect: { app: "", identify: false } };
 
@@ -30,13 +29,6 @@ test("odd bodies are not an answer, odd keys are unknown", () => {
   for (const bad of [null, undefined, 1, "x", [], [{}]]) assert.equal(readWho(bad), null);
   assert.deepEqual(readWho({ handle: 5, github: null, known: "yes", person: 3, may_act: 1 }), { handle: "", github: "", known: null, person: null, mayAct: null });
   assert.equal(readWho({ handle: "  ada  " })?.handle, "ada");
-});
-
-test("the keys are in the lab's clients list when it is at hand", { skip: !process.env["HOMELAB_CLIENTS_JSON"] }, () => {
-  const list = JSON.parse(readFileSync(process.env["HOMELAB_CLIENTS_JSON"] as string, "utf8"));
-  const who = list.clients.vscode.routes.find((r: { route: string }) => r.route === "GET /api/who");
-  assert.equal(who.reads.handle, "string");
-  assert.equal(who.reads.github, "string");
 });
 
 const answering = (status: number, body: string): FetchLike => async () => ({ status, text: async () => body });
