@@ -1,16 +1,27 @@
 /* Oerba Desktop's main process: one window that opens on the bundled setup screen and, once Oerba answers, shows
    Oerba's live pages. It deploys nothing, holds no secret and changes nothing on the computer. */
 
-import { app, BrowserWindow, ipcMain, net, shell, WebContentsView, type WebPreferences } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, net, shell, WebContentsView, type WebPreferences } from "electron";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { configFrom, TAILSCALE_DOWNLOAD } from "./config";
+import { unexpectedSwitches } from "./policy/argv";
 import { isSetupSender, type NavPolicy } from "./policy/navigation";
 import { probeAll, type FetchLike, type RunStatus } from "./setup/probes";
 import { computeSetup, type SetupState } from "./setup/state";
 import { installHardening, setRole } from "./shell/hardening";
+
+// Before anything loads: a packaged app opened with a command-line switch (a debugger port, no sandbox, no web security)
+// is being asked to run loosened, and does not start. An unpackaged run is the developer's own and is unaffected.
+if (app.isPackaged) {
+  const bad = unexpectedSwitches(process.argv.slice(1));
+  if (bad.length > 0) {
+    dialog.showErrorBox("Oerba cannot start", `It was opened with options that would loosen its protections, so it will not run:\n\n${bad.join("\n").slice(0, 300)}\n\nOpen Oerba from the Applications folder or the Dock instead.`);
+    app.exit(2);
+  }
+}
 
 const config = configFrom(process.argv, app.isPackaged);
 const setupPath = path.join(__dirname, "setup", "setup.html");
