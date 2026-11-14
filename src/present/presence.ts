@@ -9,6 +9,7 @@ import { buildMenu, labelsOf, type Action, type MenuItem } from "./menu";
 import { getJsonObject, type PresentFetch } from "./fetch";
 import { badgeText, decide, freshMemory, Limiter, type Item, type Memory } from "./notify";
 import { parseNow, type NowModel } from "./now";
+import type { RelayManager } from "../relay/manager";
 
 export interface Deps {
   oerbaOrigin: string;
@@ -23,6 +24,8 @@ export interface Deps {
   /** The person is in: the updater may start asking. */
   onIn(): void;
   quit(): void;
+  /** The localhost forwards (src/relay/): started from the menu, stopped with their workspace. */
+  relay: RelayManager;
 }
 
 /** How a notification is shown. The self-test replaces it with a recorder, and nothing else does. */
@@ -111,13 +114,14 @@ export class Presence {
     const { next, items } = decide(this.mem, model);
     this.mem = next;
     this.now = model;
+    await this.d.relay.reconcile(model.workspaces);
     for (const item of this.limiter.admit(items, Date.now())) sink.show(item, () => this.d.openRoute(item.route));
     app.dock?.setBadge(badgeText(model));
     this.render();
   }
 
   private render(): void {
-    this.menu = buildMenu({ inOerba: this.inOerba, now: this.now, loginItem: app.getLoginItemSettings().openAtLogin, paletteKey: this.keys.palette, chatKey: this.keys.chat, update: this.update });
+    this.menu = buildMenu({ inOerba: this.inOerba, now: this.now, loginItem: app.getLoginItemSettings().openAtLogin, paletteKey: this.keys.palette, chatKey: this.keys.chat, update: this.update, forwards: this.d.relay.list() });
     this.tray?.setContextMenu(Menu.buildFromTemplate(this.menu.map((m) => this.toNative(m))));
   }
 
@@ -136,11 +140,16 @@ export class Presence {
     return o;
   }
 
+  /** The relay's list changed (a forward started, stopped or ended with its workspace): the menu is drawn again. */
+  redraw(): void { this.render(); }
+
   private act(a: Action, checked: boolean): void {
     if (a.type === "open") this.d.show();
     else if (a.type === "route") this.d.openRoute(a.route);
     else if (a.type === "palette") this.d.palette();
     else if (a.type === "update") this.d.openUpdate();
+    else if (a.type === "forward") void this.d.relay.start(a.owner, a.name, a.port).then(() => this.render());
+    else if (a.type === "stop") void this.d.relay.stop(a.id).then(() => this.render());
     else if (a.type === "login") app.setLoginItemSettings({ openAtLogin: checked });   // only when the person ticks it
     else this.d.quit();
   }

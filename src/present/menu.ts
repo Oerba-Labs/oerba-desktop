@@ -2,11 +2,15 @@
 
 import type { NowModel } from "./now";
 import { CHAT, HOME, workspaceRoute } from "./routes";
+import { COMMON_PORTS, type ForwardInfo } from "../relay/manager";
+import { upstreamName } from "../relay/rules";
 
 export type Action =
   | { type: "open" }
   | { type: "route"; route: string }
   | { type: "palette" }
+  | { type: "forward"; owner: string; name: string; port: number }
+  | { type: "stop"; id: string }
   | { type: "login"; checked: boolean }
   | { type: "update" }
   | { type: "quit" };
@@ -30,6 +34,8 @@ export interface MenuInput {
   chatKey: boolean;
   /** A version waiting to be offered, or null. */
   update: string | null;
+  /** The localhost forwards running now (src/relay/), shown under their workspaces. */
+  forwards?: ForwardInfo[];
 }
 
 const SEP: MenuItem = { label: "", kind: "separator" };
@@ -45,7 +51,16 @@ export function buildMenu(i: MenuInput): MenuItem[] {
     const rows: MenuItem[] = [];
     for (const w of started) {
       const route = workspaceRoute(w.owner, w.name);
-      if (route !== null && rows.length < MAX_LISTED) rows.push({ label: w.name, action: { type: "route", route } });
+      if (route === null || rows.length >= MAX_LISTED) continue;
+      // The workspace's page, then its ports on this Mac's localhost: those running (and the number each took), then those to start.
+      const mine = (i.forwards ?? []).filter((f) => f.owner === w.owner && f.name === w.name);
+      const sub: MenuItem[] = [{ label: "Open in Oerba", action: { type: "route", route } }];
+      const running = new Set(mine.map((f) => f.remote));
+      const offer = COMMON_PORTS.filter((p) => !running.has(p) && upstreamName(p, w.name, w.owner) !== null);
+      if (mine.length > 0 || offer.length > 0) sub.push(SEP);
+      for (const f of mine) sub.push({ label: `localhost:${f.local} → ${f.remote} (stop)`, action: { type: "stop", id: f.id } });
+      for (const p of offer) sub.push({ label: `Open on localhost:${p}`, action: { type: "forward", owner: w.owner, name: w.name, port: p } });
+      rows.push({ label: mine.length > 0 ? `${w.name} (localhost:${mine.map((f) => f.local).join(", ")})` : w.name, submenu: sub });
     }
     items.push(rows.length > 0 ? { label: "Workspaces", submenu: rows } : { label: "Workspaces", enabled: false });
     if (i.now?.isOwner) items.push({ label: `Waiting on you (${i.now.needs.length})`, action: { type: "route", route: HOME } });

@@ -19,6 +19,8 @@ import { Presence } from "./present/presence";
 import { realEngine, Updater, type Engine } from "./update/updater";
 import { UpdateWindow } from "./update/window";
 import type { PresentFetch } from "./present/fetch";
+import { RelayManager } from "./relay/manager";
+import { loopbackUpstream, ONDEMAND } from "./relay/rules";
 import { installHardening, setRole } from "./shell/hardening";
 
 // Before anything loads: a packaged app opened with a command-line switch (a debugger port, no sandbox, no web security)
@@ -72,6 +74,9 @@ const updater = new Updater(
   (s) => { presence?.setUpdate(s.phase === "none" ? null : s.version); updateWindow?.push(); },
 );
 let updateWindow: UpdateWindow | null = null;
+// The localhost forwards. They dial On-Demand's names; only the self-test may put a loopback stand-in in their place, and
+// only when config.ts found an unpackaged app given --selftest (a packaged app's config never holds one).
+const relay = new RelayManager((config.relayUpstream !== null && loopbackUpstream(config.relayUpstream)) || ONDEMAND, () => presence?.redraw());
 
 function fit(view: WebContentsView): void {
   if (!win) return;
@@ -201,18 +206,18 @@ ipcMain.handle("setup:act", async (event, action: unknown) => {
 app.whenReady().then(() => {
   serveBundled(__dirname);
   installHardening(policy);
-  presence = new Presence({ oerbaOrigin: config.oerbaOrigin, fetchFn: presentFetch, intervalMs: config.presentMs, windowShown: () => !!win && win.isVisible() && !win.isMinimized(), show: showWindow, openRoute, palette: openPalette, openUpdate: () => updateWindow?.show(), onIn: () => updater.start(), quit: () => app.quit() });
+  presence = new Presence({ oerbaOrigin: config.oerbaOrigin, fetchFn: presentFetch, intervalMs: config.presentMs, windowShown: () => !!win && win.isVisible() && !win.isMinimized(), show: showWindow, openRoute, palette: openPalette, openUpdate: () => updateWindow?.show(), onIn: () => updater.start(), quit: () => app.quit(), relay });
   presence.start();
   updateWindow = new UpdateWindow(policy, SAFE, updater, config.selftest);
   win = createWindow();
   showSetup();
   if (__SELFTEST__ && config.selftest) {
     // Loaded only for an unpackaged app given --selftest (config.ts): the self-test is not in the packaged code path.
-    void import("./selftest").then((m) => m.runSelftest({ config, policy, getWin: () => win, getSetup: () => setupView, getOerba: () => oerbaView, getPresence: () => presence, getUpdater: () => updater, openPalette, getUpdateWindow: () => updateWindow, setEngine: (e) => { testEngine = e; }, SAFE, fit }));
+    void import("./selftest").then((m) => m.runSelftest({ config, policy, getWin: () => win, getSetup: () => setupView, getOerba: () => oerbaView, getPresence: () => presence, getUpdater: () => updater, getRelay: () => relay, openPalette, getUpdateWindow: () => updateWindow, setEngine: (e) => { testEngine = e; }, SAFE, fit }));
   }
   app.on("activate", () => { if (!win) { win = createWindow(); showSetup(); } else showWindow(); });
 });
 
 app.on("before-quit", () => { quitting = true; });
-app.on("will-quit", () => { presence?.stop(); updater.stop(); });
+app.on("will-quit", () => { presence?.stop(); updater.stop(); void relay.stopAll(); });
 app.on("window-all-closed", () => { /* the menu bar item keeps the app running */ });

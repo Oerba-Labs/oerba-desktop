@@ -1,10 +1,12 @@
 /* The Electron smoke run (npm run smoke). It is reached only from main.ts, only when config.ts found an unpackaged app
    given --selftest. It asserts from the main process, prints one line a check and exits with a status. */
 
+import http from "node:http";
 import { app, BrowserWindow, type WebContentsView, type WebPreferences } from "electron";
 import type { Config } from "./config";
 import type { NavPolicy } from "./policy/navigation";
 import type { Presence } from "./present/presence";
+import type { RelayManager } from "./relay/manager";
 import type { Engine, Updater } from "./update/updater";
 import type { UpdateWindow } from "./update/window";
 import { sink } from "./present/presence";
@@ -19,6 +21,7 @@ export interface Hooks {
   getOerba(): WebContentsView | null;
   getPresence(): Presence | null;
   getUpdater(): Updater;
+  getRelay(): RelayManager;
   openPalette(): void;
   getUpdateWindow(): UpdateWindow | null;
   setEngine(e: Engine): void;
@@ -101,6 +104,22 @@ export async function runSelftest(h: Hooks): Promise<void> {
     check("it lists the person's started workspace and not another's", !labels.includes("  other"));
     check("the dock badge counts what waits on the owner", app.dock?.getBadge() === "1", String(app.dock?.getBadge()));
     check("the first read made no notification", notes.length === 0, String(notes.length));
+    // 4d. The localhost relay, against a stand-in on loopback (--relay-upstream): a forward of alice's running workspace
+    // answers on this Mac, says what it was sent, and stops when the poll no longer shows its workspace running.
+    const relay = h.getRelay();
+    const fwd = await relay.start("alice", "demo", 8081);
+    check("a forward started on a loopback number", fwd !== null && fwd.local > 0, JSON.stringify(fwd));
+    if (fwd) {
+      const seen = (await (await fetch(`http://127.0.0.1:${fwd.local}/status?access_token=x`, { headers: { cookie: "a=b", authorization: "Bearer z" } })).json()) as { host: string; url: string; headers: Record<string, string> };
+      check("the stand-in was reached by the workspace port's own name, with the browser's and credential headers left out", seen.host === "8081--demo--alice.ondemand.oerba.dev" && seen.url === "/status" && !("cookie" in seen.headers) && !("authorization" in seen.headers), JSON.stringify(seen));
+      // fetch will not set Host; node's http will.
+      const bad = await new Promise<number>((resolve) => { const r = http.request({ host: "127.0.0.1", port: fwd.local, path: "/", headers: { host: `evil.example:${fwd.local}` }, agent: false }, (res) => { res.resume(); resolve(res.statusCode ?? 0); }); r.on("error", () => resolve(0)); r.end(); });
+      check("a wrong Host was refused", bad === 421, String(bad));
+      await relay.reconcile([{ owner: "alice", name: "demo", status: "stopped" }]);
+      const after = await fetch(`http://127.0.0.1:${fwd.local}/`).then((r) => r.status, () => 0);
+      check("the forward stopped when its workspace did", after === 0 && relay.list().length === 0, String(after));
+    }
+
     await fetch(`${h.policy.oerbaOrigin}/__now`, { method: "POST", body: "second" });
     await until("the second read", async () => { await presence.refresh(); return notes.length > 0; });
     check("a new need, a failed deploy and a failed workspace made one notification each, and a good deploy none", notes.length === 3 && notes.map((n) => n.title).sort().join("|") === "A deploy failed|A workspace failed|Waiting on you", notes.map((n) => n.title).join("|"));

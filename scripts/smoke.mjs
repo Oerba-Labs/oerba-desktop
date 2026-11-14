@@ -46,13 +46,18 @@ for (let i = 0; i < 3; i++) {
 });
 const stranger = createServer((_req, res) => res.writeHead(200, { "content-type": "text/html" }).end(page("a stranger")));
 
-const listen = (s) => new Promise((r) => s.listen(0, "127.0.0.1", () => r(s.address().port)));
-const [a, b] = [await listen(oerba), await listen(stranger)];
+// A stand-in for On-Demand, for the localhost relay: it says what it was asked.
+const upstream = createServer((req, res) => {
+  res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ host: req.headers.host, url: req.url.split("?")[0], headers: req.headers }));
+});
 
-const child = spawn(electron, [".", "--selftest", `--oerba-origin=http://127.0.0.1:${a}`, `--other-origin=http://127.0.0.1:${b}`, "--poll-ms=300", "--present-ms=400"], { stdio: "inherit" });
+const listen = (s) => new Promise((r) => s.listen(0, "127.0.0.1", () => r(s.address().port)));
+const [a, b, u] = [await listen(oerba), await listen(stranger), await listen(upstream)];
+
+const child = spawn(electron, [".", "--selftest", `--oerba-origin=http://127.0.0.1:${a}`, `--other-origin=http://127.0.0.1:${b}`, "--poll-ms=300", "--present-ms=400", `--relay-upstream=http://127.0.0.1:${u}`], { stdio: "inherit" });
 const killer = setTimeout(() => { console.log("smoke: killed after 90 s"); child.kill("SIGKILL"); }, 90_000);
 child.on("exit", (code) => {
   clearTimeout(killer);
-  oerba.close(); stranger.close();
+  oerba.close(); stranger.close(); upstream.close();
   process.exit(code ?? 1);
 });
