@@ -2,6 +2,8 @@
    ever set as HTML. The text is stripped of tags, entities are decoded, control and bidirectional characters are dropped,
    and the length is capped; the window sets the result with textContent. Pure. */
 
+import { capMarks } from "../present/text";
+
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", "#39": "'", "#x27": "'" };
 const NOT_PLAIN = /[^\p{L}\p{M}\p{N}\p{P}\p{S}\p{Zs}\n]/gu;
 
@@ -22,6 +24,7 @@ export function notesToText(raw: unknown, max = 3000): string {
     .replace(/ ?\n ?/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-  const points = Array.from(text);
-  return points.length <= max ? text : points.slice(0, max - 1).join("").trimEnd() + "…";
+  const capped = capMarks(text);
+  const points = Array.from(capped);
+  return points.length <= max ? capped : points.slice(0, max - 1).join("").trimEnd() + "…";
 }

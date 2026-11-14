@@ -4,7 +4,9 @@ import { parseNow, type NowModel } from "../src/present/now";
 import { badgeText, decide, freshMemory, Limiter, type Item } from "../src/present/notify";
 import { safeRoute, workspaceRoute } from "../src/present/routes";
 import { buildMenu, labelsOf } from "../src/present/menu";
-import { clean } from "../src/present/text";
+import { clean, plainName } from "../src/present/text";
+import { OPEN_PALETTE_JS } from "../src/present/palette";
+import { notesToText } from "../src/update/notes";
 import { getJsonObject, type PresentFetch } from "../src/present/fetch";
 
 const me = { handle: "alice", github: "alice-gh" };
@@ -152,4 +154,46 @@ test("a read gives a JSON object or nothing: a status, a size cap, an array and 
   let seen: { redirect: string; timed: boolean } | null = null;
   await getJsonObject(async (_u, init) => { seen = { redirect: init.redirect, timed: init.signal instanceof AbortSignal }; return { status: 200, body: null }; }, "https://x/");
   assert.deepEqual(seen, { redirect: "manual", timed: true });
+});
+
+test("combining marks are capped after each character, so zalgo text cannot spill", () => {
+  const marks = "̀́̂̃̄̅̆";
+  const zalgo = "H" + marks.repeat(20) + "i";
+  assert.equal(clean(zalgo, 50), "H̀́i");
+  assert.equal(clean("é", 5), "é");   // NFC composes it
+  assert.equal(clean("q̀́̂q̀́̂", 10), "q̀́q̀́");
+  assert.equal(notesToText(zalgo), "H̀́i");
+});
+
+test("an event id must be a safe, non-negative integer", () => {
+  const m = parseNow({ owners: [], events: [{ id: 2 ** 60, kind: "deploy", failed: true }, { id: -1, kind: "deploy", failed: true }, { id: 1.5, kind: "deploy", failed: true }, { id: 4, kind: "deploy", failed: true }] }, me)!;
+  assert.deepEqual(m.deploys.map((d) => d.id), [4]);
+});
+
+test("a console whose database was replaced: the lower newest id is the new baseline, and nothing is said of it", () => {
+  const dep = (id: number) => ({ id, failed: true, subject: "app", summary: "x" });
+  let r = decide(freshMemory(), model({ deploys: [dep(500)] }));
+  r = decide(r.next, model({ deploys: [dep(3)] }));            // 3 < 500: replaced
+  assert.deepEqual(r.items, []);
+  assert.equal(r.next.maxEvent, 3);
+  r = decide(r.next, model({ deploys: [dep(4), dep(3)] }));    // and a real new failure after that is news again
+  assert.deepEqual(r.items.map((i) => i.title), ["A deploy failed"]);
+  r = decide(r.next, model({ deploys: [] }));                  // no events at all: the baseline stands
+  assert.equal(r.next.maxEvent, 4);
+});
+
+test("a name the menu lists is one its click can open: '..' is refused in the name", () => {
+  assert.equal(workspaceRoute("alice", "a..b"), null);
+  assert.equal(plainName("a..b"), null);
+  assert.equal(plainName("a.b"), "a.b");
+  const m = parseNow({ owners: [], machines: { x: { state: { workspaces: [{ name: "a..b", owner: "alice", status: "running" }, { name: "ok.name", owner: "alice", status: "running" }] } } } }, me)!;
+  assert.deepEqual(m.workspaces.map((w) => w.name), ["ok.name"]);
+  const items = buildMenu({ inOerba: true, now: m, loginItem: false, paletteKey: true, chatKey: true, update: null });
+  for (const w of m.workspaces) assert.equal(safeRoute(workspaceRoute(w.owner, w.name)), true);
+  assert.equal(labelsOf(items).includes("  a..b"), false);
+});
+
+test("the palette's opening is a fixed string, with nothing woven into it", () => {
+  assert.equal(OPEN_PALETTE_JS.includes("${"), false);
+  assert.match(OPEN_PALETTE_JS, /^document\.dispatchEvent\(new KeyboardEvent\("keydown", \{ key: "k", metaKey: true, bubbles: true, cancelable: true \}\)\)$/);
 });

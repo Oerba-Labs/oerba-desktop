@@ -20,10 +20,14 @@ const FAILED = "failed";
 
 /** The notifications this read earns, and what to remember for the next. The first read earns none. */
 export function decide(mem: Memory, now: NowModel): { next: Memory; items: Item[] } {
+  const newest = now.deploys.reduce((m, d) => Math.max(m, d.id), -1);
+  // The newest id seen can only grow. One that comes back LOWER means the console's database was replaced: the new newest
+  // is the baseline, and the lines in it are not news.
+  const replaced = mem.primed && newest >= 0 && newest < mem.maxEvent;
   const next: Memory = {
     primed: true,
     needs: new Set(now.needs.map((n) => n.key)),
-    maxEvent: Math.max(mem.maxEvent, ...now.deploys.map((d) => d.id), 0),
+    maxEvent: newest < 0 ? mem.maxEvent : replaced ? newest : Math.max(mem.maxEvent, newest),
     status: new Map(now.workspaces.map((w) => [`${w.owner}/${w.name}`, w.status])),
   };
   if (!mem.primed) return { next, items: [] };
@@ -33,7 +37,7 @@ export function decide(mem: Memory, now: NowModel): { next: Memory; items: Item[
     if (!mem.needs.has(n.key)) items.push({ title: "Waiting on you", body: n.title, route: HOME });
   }
   for (const d of now.deploys) {
-    if (d.id > mem.maxEvent && d.failed) items.push({ title: "A deploy failed", body: [d.subject, d.summary].filter(Boolean).join(": "), route: HOME });
+    if (!replaced && d.id > mem.maxEvent && d.failed) items.push({ title: "A deploy failed", body: [d.subject, d.summary].filter(Boolean).join(": "), route: HOME });
   }
   for (const w of now.workspaces) {
     if (w.status === FAILED && mem.status.get(`${w.owner}/${w.name}`) !== FAILED) {

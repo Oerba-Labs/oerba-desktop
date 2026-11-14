@@ -28,12 +28,14 @@ const oerba = createServer((req, res) => {
     res.writeHead(200, { "content-type": "text/html" }).end(`<!doctype html><title>gate</title>
 <p><a id="blank" target="_blank" href="https://example.invalid/click-blank">new window</a></p>
 <p><a id="same" href="https://example.invalid/click-same">same frame</a></p>
-<iframe src="/sub" width="200" height="60"></iframe>`);
+<iframe src="/sub" width="200" height="60"></iframe>
+<script>document.addEventListener("keydown", (e) => { if (e.metaKey && e.key === "k") window.__k = (window.__k || 0) + 1; });</script>`);
     return;
   }
   if (req.url === "/sub") {
     // A workspace door running somebody's code: it tries to open the browser, and to send the page above it away.
     res.writeHead(200, { "content-type": "text/html" }).end(`<!doctype html><script>
+document.addEventListener("keydown", (e) => { if (e.metaKey && e.key === "k") window.__k = (window.__k || 0) + 1; });
 for (let i = 0; i < 3; i++) {
   setTimeout(() => { try { window.open("https://example.invalid/sub-open"); } catch {} try { window.top.location = "https://example.invalid/sub-top"; } catch {} }, 100 * i);
 }</script>sub`);

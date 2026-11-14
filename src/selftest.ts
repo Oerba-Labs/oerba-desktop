@@ -19,6 +19,7 @@ export interface Hooks {
   getOerba(): WebContentsView | null;
   getPresence(): Presence | null;
   getUpdater(): Updater;
+  openPalette(): void;
   getUpdateWindow(): UpdateWindow | null;
   setEngine(e: Engine): void;
   SAFE: WebPreferences;
@@ -155,6 +156,18 @@ export async function runSelftest(h: Hooks): Promise<void> {
       await oerba.webContents.executeJavaScript("window.open('https://example.invalid/no-press')");
       await sleep(300);
       check("a call of Oerba's own page with no press opened nothing", opened.length === before2, opened.join(" "));
+
+      // The shortcut's way of opening the palette: the key reaches Oerba's own document, not the frame inside it, and is no press.
+      h.openPalette();
+      await sleep(400);
+      const keys = await oerba.webContents.executeJavaScript("window.__k || 0");
+      const inner = oerba.webContents.mainFrame.frames[0];
+      const innerKeys = inner ? await inner.executeJavaScript("window.__k || 0") : -1;
+      check("the shortcut's key reached Oerba's own page and not the frame inside it", keys === 1 && innerKeys === 0, `${String(keys)} ${String(innerKeys)}`);
+      const afterKey = opened.length;
+      await oerba.webContents.executeJavaScript("window.open('https://example.invalid/after-palette')");
+      await sleep(300);
+      check("the shortcut is not a press: a link-out right after it was refused", opened.length === afterKey && refusals.has("linkout:gesture"), opened.join(" "));
 
       h.getWin()?.show(); h.getWin()?.focus();   // synthetic presses are not delivered to a window that was never shown
       oerba.webContents.focus();

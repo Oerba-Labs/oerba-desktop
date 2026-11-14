@@ -64,7 +64,7 @@ export function parseNow(body: unknown, me: Me): NowModel | null {
   for (const e of arr(b["events"]).slice(0, MAX_EVENTS)) {
     const o = obj(e);
     const id = o?.["id"];
-    if (typeof id !== "number" || !Number.isSafeInteger(id) || o?.["kind"] !== "deploy") continue;
+    if (typeof id !== "number" || !Number.isSafeInteger(id) || id < 0 || o?.["kind"] !== "deploy") continue;
     deploys.push({ id, failed: o["failed"] === true, subject: clean(o["subject"], 40), summary: clean(o["summary"], 100) });
   }
 

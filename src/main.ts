@@ -14,6 +14,7 @@ import { probeAll, type FetchLike, type RunStatus } from "./setup/probes";
 import { checkingSetup, computeSetup, type SetupState } from "./setup/state";
 import { isOerbaPage } from "./policy/navigation";
 import { safeRoute } from "./present/routes";
+import { OPEN_PALETTE_JS } from "./present/palette";
 import { Presence } from "./present/presence";
 import { realEngine, Updater, type Engine } from "./update/updater";
 import { UpdateWindow } from "./update/window";
@@ -149,14 +150,16 @@ function openRoute(route: string): void {
   else void wc.loadURL(`${config.oerbaOrigin}/${route}`);
 }
 
-/** ⌘K is what Oerba's own page listens for to open its palette (it toggles, so a second press closes it). */
+/** Oerba's own page opens its palette on ⌘K (it toggles, so a second press closes it). The key is dispatched on Oerba's own
+    document, in its top frame alone, by a fixed string (src/present/palette.ts), never by sendInputEvent. */
 function openPalette(): void {
   showWindow();
   if (!oerbaView) return;
   const wc = oerbaView.webContents;
+  const top = wc.mainFrame;
+  if (wc.isLoading() || !isOerbaPage(top.url, policy)) return;
   wc.focus();
-  wc.sendInputEvent({ type: "keyDown", keyCode: "K", modifiers: ["meta"] });
-  wc.sendInputEvent({ type: "keyUp", keyCode: "K", modifiers: ["meta"] });
+  void top.executeJavaScript(OPEN_PALETTE_JS);
 }
 
 async function check(): Promise<void> {
@@ -205,7 +208,7 @@ app.whenReady().then(() => {
   showSetup();
   if (__SELFTEST__ && config.selftest) {
     // Loaded only for an unpackaged app given --selftest (config.ts): the self-test is not in the packaged code path.
-    void import("./selftest").then((m) => m.runSelftest({ config, policy, getWin: () => win, getSetup: () => setupView, getOerba: () => oerbaView, getPresence: () => presence, getUpdater: () => updater, getUpdateWindow: () => updateWindow, setEngine: (e) => { testEngine = e; }, SAFE, fit }));
+    void import("./selftest").then((m) => m.runSelftest({ config, policy, getWin: () => win, getSetup: () => setupView, getOerba: () => oerbaView, getPresence: () => presence, getUpdater: () => updater, openPalette, getUpdateWindow: () => updateWindow, setEngine: (e) => { testEngine = e; }, SAFE, fit }));
   }
   app.on("activate", () => { if (!win) { win = createWindow(); showSetup(); } else showWindow(); });
 });
