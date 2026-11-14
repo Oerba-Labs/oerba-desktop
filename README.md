@@ -58,3 +58,8 @@ override is honoured only when the app is **not packaged** and `--selftest` is g
 Stage 1 is this: the shell and the setup screen, unsigned. Later: packing, signing and notarising with electron-builder; an
 updater that asks (electron-updater, with GitHub Releases); then every workspace's pages kept open side by side, the menu bar
 item, reaching the computer (forwarded ports, folders), and simulators. Each is its own stage.
+
+## Licence
+
+All rights reserved (`LICENSE`). The source is published so that anyone can read what the app does on their computer; it is
+not licensed for reuse. Oerba Labs' signed releases may be run as they are.
