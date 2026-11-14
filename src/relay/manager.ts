@@ -33,7 +33,7 @@ export class RelayManager {
     if (this.starting.has(id) || this.running.size + this.starting.size >= MAX_FORWARDS) return null;
     this.starting.add(id);
     try {
-      const fw = new Forward({ name: host, port: remote, upstream: this.upstream });
+      const fw = new Forward({ name: host, port: remote, upstream: this.upstream, forwarded: (n) => [...this.running.values()].some((r) => r.info.local === n) });
       const taken = (n: number): boolean => [...this.running.values()].some((r) => r.info.local === n);
       let local: number;
       try { local = await fw.listen(remote, taken); } catch { await fw.close(); return null; }

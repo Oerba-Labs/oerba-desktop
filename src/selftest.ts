@@ -110,8 +110,8 @@ export async function runSelftest(h: Hooks): Promise<void> {
     const fwd = await relay.start("alice", "demo", 8081);
     check("a forward started on a loopback number", fwd !== null && fwd.local > 0, JSON.stringify(fwd));
     if (fwd) {
-      const seen = (await (await fetch(`http://127.0.0.1:${fwd.local}/status?access_token=x`, { headers: { cookie: "a=b", authorization: "Bearer z" } })).json()) as { host: string; url: string; headers: Record<string, string> };
-      check("the stand-in was reached by the workspace port's own name, with the browser's and credential headers left out", seen.host === "8081--demo--alice.ondemand.oerba.dev" && seen.url === "/status" && !("cookie" in seen.headers) && !("authorization" in seen.headers), JSON.stringify(seen));
+      const seen = (await (await fetch(`http://127.0.0.1:${fwd.local}/status?access_token=x`, { headers: { cookie: "a=b; ondemand_session_token=zz", authorization: "Bearer z" } })).json()) as { host: string; url: string; headers: Record<string, string> };
+      check("the stand-in was reached by the workspace port's own name, with the app's own cookie sent and On-Demand's, the browser's and credential headers left out", seen.host === "8081--main--demo--alice.ondemand.oerba.dev" && seen.url === "/status" && seen.headers["cookie"] === "a=b" && !("authorization" in seen.headers), JSON.stringify(seen));
       // fetch will not set Host; node's http will.
       const bad = await new Promise<number>((resolve) => { const r = http.request({ host: "127.0.0.1", port: fwd.local, path: "/", headers: { host: `evil.example:${fwd.local}` }, agent: false }, (res) => { res.resume(); resolve(res.statusCode ?? 0); }); r.on("error", () => resolve(0)); r.end(); });
       check("a wrong Host was refused", bad === 421, String(bad));

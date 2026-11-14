@@ -4,15 +4,15 @@ import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import { createHash } from "node:crypto";
-import { cleanPath, fetchSiteAllowed, hostAllowed, loopbackUpstream, neverSent, ONDEMAND, originAllowed, responseHeaders, rewriteLocation, upstreamHeaders, upstreamName, vet } from "../src/relay/rules";
+import { AGENT, cleanPath, cookieUpstream, setCookieDown, fetchSiteAllowed, hostAllowed, loopbackUpstream, neverSent, ONDEMAND, originAllowed, responseHeaders, rewriteLocation, upstreamHeaders, upstreamName, vet } from "../src/relay/rules";
 import { COMMON_PORTS, RelayManager } from "../src/relay/manager";
 import { buildMenu, labelsOf } from "../src/present/menu";
 
 // ---- the rules, pure --------------------------------------------------------------------------------------------------------
 
 test("the upstream name is built from a plain port, workspace and owner and ends under ondemand.oerba.dev", () => {
-  assert.equal(upstreamName(8081, "demo", "alice"), "8081--demo--alice.ondemand.oerba.dev");
-  assert.equal(upstreamName(19006, "My-App", "Alice"), "19006--my-app--alice.ondemand.oerba.dev");
+  assert.equal(upstreamName(8081, "demo", "alice"), "8081--main--demo--alice.ondemand.oerba.dev");
+  assert.equal(upstreamName(19006, "My-App", "Alice"), "19006--main--my-app--alice.ondemand.oerba.dev");
   for (const port of [80, 1023, 65536, 8081.5, -1, NaN, "8081", null, undefined]) assert.equal(upstreamName(port, "demo", "alice"), null, String(port));
   for (const bad of ["a.b", "a_b", "a--b", "-a", "a-", "a/b", "a b", "a@github", "a\nb", "", "x.evil.com#", "a:1", "é", "a\u0000", 5, null]) {
     assert.equal(upstreamName(8081, bad, "alice"), null, JSON.stringify(bad));
@@ -20,6 +20,26 @@ test("the upstream name is built from a plain port, workspace and owner and ends
   }
   assert.equal(upstreamName(8081, "x".repeat(60), "alice"), null, "a DNS label is at most 63");
   for (const [w, o] of [["demo", "alice"], ["a-b-c", "d-e"], ["9", "9"]] as const) assert.ok(upstreamName(8081, w, o)!.endsWith(".ondemand.oerba.dev"));
+});
+
+/** The fork's own parser, ondemandd/workspaceapps/appurl/appurl.go (appURL, PortRegex, ParseSubdomainAppURL), as the same regular expressions. */
+const NAME_RX = "[a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*";
+const FORK = new RegExp(`^(${NAME_RX})(?:--(${NAME_RX}))?--(${NAME_RX})--(${NAME_RX})$`);
+const FORK_PORT = /^\d{4,5}s?$/;
+function forkParse(sub: string): { slug: string; agent: string; workspace: string; owner: string } | null {
+  const m = FORK.exec(sub.split("---").at(-1)!);
+  if (!m) return null;
+  const [, slug, agent = "", workspace, owner] = m;
+  if (FORK_PORT.test(slug!) && agent === "") return null;   // "agent name is required for port-based URLs"
+  return { slug: slug!, agent: FORK_PORT.test(slug!) ? agent : "", workspace: workspace!, owner: owner! };
+}
+
+test("the built name parses under the fork's rule: port, then agent, then workspace, then owner", () => {
+  const name = upstreamName(8081, "demo", "alice")!;
+  assert.deepEqual(forkParse(name.slice(0, -".ondemand.oerba.dev".length)), { slug: "8081", agent: AGENT, workspace: "demo", owner: "alice" });
+  assert.equal(AGENT, "main");
+  assert.equal(forkParse("8081--demo--alice"), null, "the old shape, with no agent, is refused by the fork");
+  for (const [w, o] of [["my-app", "bob-2"], ["a", "b"]] as const) assert.ok(forkParse(upstreamName(19006, w, o)!.split(".")[0]!));
 });
 
 test("Host must be this forward's own", () => {
@@ -32,6 +52,30 @@ test("Origin, when present, must be the forward's own page", () => {
   assert.equal(originAllowed(undefined, 8081), true);
   for (const o of ["http://localhost:8081", "http://127.0.0.1:8081", "http://[::1]:8081"]) assert.equal(originAllowed(o, 8081), true, o);
   for (const o of ["https://localhost:8081", "http://localhost:3000", "http://localhost", "null", "", "http://evil.example", "https://app.oerba.dev", "http://localhost:8081.evil.example", "http://localhost:8081/"]) assert.equal(originAllowed(o, 8081), false, o);
+});
+
+test("another forward of the app is an allowed origin; any other localhost port is not", () => {
+  const mine = (n: number) => n === 8081 || n === 5173;
+  for (const o of ["http://localhost:5173", "http://127.0.0.1:5173", "http://[::1]:5173", "http://localhost:8081"]) assert.equal(originAllowed(o, 8081, mine), true, o);
+  for (const o of ["http://localhost:3000", "http://localhost:05173", "https://localhost:5173", "http://localhost:5173.evil.example", "http://evil.example:5173", "http://localhost"]) assert.equal(originAllowed(o, 8081, mine), false, o);
+  const ok = { host: "localhost:8081", origin: "http://localhost:5173", "sec-fetch-site": "same-site", "sec-fetch-mode": "cors", "sec-fetch-dest": "empty" };
+  assert.deepEqual(vet(ok, "GET", "/api", 8081, mine), { ok: true });
+  assert.equal(vet(ok, "GET", "/api", 8081).ok, false, "not a forward: refused");
+  assert.equal(vet({ ...ok, origin: "http://localhost:3000" }, "GET", "/api", 8081, mine).ok, false);
+  assert.equal(vet({ host: "localhost:8081", "sec-fetch-site": "same-site", "sec-fetch-mode": "no-cors", "sec-fetch-dest": "script" }, "GET", "/", 8081, mine).ok, false, "same-site with no Origin says nothing of which port");
+  assert.equal(vet({ ...ok, "sec-fetch-site": "cross-site" }, "GET", "/api", 8081, mine).ok, false);
+});
+
+test("cookies: the app's own go both ways, On-Demand's own never, and a Domain is removed", () => {
+  assert.equal(cookieUpstream("sid=1; ondemand_session_token=T; oauth_state=x; ondemand_subdomain_app_session_token_abc=y; theme=dark; ondemand_path_app_session_token=p; oauth_redirect=r; ondemand_signed_app_token=s"), "sid=1; theme=dark");
+  assert.equal(cookieUpstream("ondemand_session_token=T"), null);
+  assert.equal(setCookieDown("sid=1; Path=/; Domain=8081--main--demo--alice.ondemand.oerba.dev; HttpOnly"), "sid=1; Path=/; HttpOnly");
+  assert.equal(setCookieDown("sid=1; DOMAIN = x.example; Secure"), "sid=1; Secure");
+  for (const n of ["ondemand_session_token", "oauth_state", "ondemand_subdomain_app_session_token_h"]) assert.equal(setCookieDown(`${n}=v; Path=/`), null, n);
+  const up = upstreamHeaders({ cookie: "sid=1; ondemand_session_token=T" }, "n");
+  assert.equal(up["cookie"], "sid=1");
+  assert.equal(upstreamHeaders({ cookie: "ondemand_session_token=T" }, "n")["cookie"], undefined);
+  assert.deepEqual(responseHeaders({ "set-cookie": ["a=1; Domain=x.example", "ondemand_session_token=z"] }, "n", "localhost:8081"), { "set-cookie": ["a=1"] });
 });
 
 test("Fetch Metadata: cross-site and same-site only as a top-level navigation, as On-Demand's own rule", () => {
@@ -62,10 +106,10 @@ test("what is never sent upstream, and the token parameters cut from the address
     "sec-fetch-site": "same-origin", "sec-fetch-mode": "cors", "sec-fetch-dest": "empty", "sec-fetch-user": "?1", forwarded: "for=1.2.3.4", "x-forwarded-for": "6.6.6.6", "x-forwarded-host": "evil", "x-forwarded-proto": "https",
     "tailscale-user-login": "boss@github", "x-real-ip": "1.1.1.1", connection: "keep-alive, x-private", "x-private": "1", "keep-alive": "5", upgrade: "h2c", "transfer-encoding": "chunked", te: "trailers", expect: "100-continue",
     accept: "text/html", "user-agent": "ua", "x-app": "kept", "content-type": "application/json",
-  }, "8081--demo--alice.ondemand.oerba.dev");
-  assert.deepEqual(Object.keys(sent).sort(), ["accept", "content-type", "host", "user-agent", "x-app"]);
-  assert.equal(sent["host"], "8081--demo--alice.ondemand.oerba.dev");
-  for (const n of ["Origin", "Cookie", "Authorization", "Sec-Fetch-Mode", "X-Forwarded-Host", "Forwarded", "On-Demand-Session-Token", "Tailscale-User-Login", "Transfer-Encoding"]) assert.equal(neverSent(n), true, n);
+  }, "8081--main--demo--alice.ondemand.oerba.dev");
+  assert.deepEqual(Object.keys(sent).sort(), ["accept", "content-type", "cookie", "host", "user-agent", "x-app"]);
+  assert.equal(sent["host"], "8081--main--demo--alice.ondemand.oerba.dev");
+  for (const n of ["Origin", "Authorization", "Sec-Fetch-Mode", "X-Forwarded-Host", "Forwarded", "On-Demand-Session-Token", "Tailscale-User-Login", "Transfer-Encoding"]) assert.equal(neverSent(n), true, n);
   assert.equal(cleanPath("/a?x=1&access_token=s&ondemand_session_token=t&y=2"), "/a?x=1&y=2");
   assert.equal(cleanPath("/a?ACCESS_TOKEN=s"), "/a");
   assert.equal(cleanPath("/a?%61ccess_token=s&k=v"), "/a?k=v");
@@ -73,10 +117,10 @@ test("what is never sent upstream, and the token parameters cut from the address
   assert.equal(cleanPath("/index.bundle"), "/index.bundle");
 });
 
-test("a response comes back without hop-by-hop headers or cookies, and a redirect to the app's name comes home", () => {
-  const name = "8081--demo--alice.ondemand.oerba.dev";
+test("a response comes back without hop-by-hop headers, and a redirect to the app's name comes home", () => {
+  const name = "8081--main--demo--alice.ondemand.oerba.dev";
   const out = responseHeaders({ "content-type": "text/html", "set-cookie": ["a=b"], connection: "close", "keep-alive": "1", location: `https://${name}/next?x=1`, "transfer-encoding": "chunked" }, name, "localhost:8081");
-  assert.deepEqual(out, { "content-type": "text/html", location: "http://localhost:8081/next?x=1" });
+  assert.deepEqual(out, { "content-type": "text/html", "set-cookie": ["a=b"], location: "http://localhost:8081/next?x=1" });
   assert.equal(rewriteLocation("https://other.example/x", name, "localhost:8081"), "https://other.example/x");
   assert.equal(rewriteLocation(`https://${name}.evil.example/`, name, "localhost:8081"), `https://${name}.evil.example/`);
   assert.equal(rewriteLocation("/relative", name, "localhost:8081"), "/relative");
@@ -85,7 +129,7 @@ test("a response comes back without hop-by-hop headers or cookies, and a redirec
 test("only a loopback http address can stand in for On-Demand; the real one is TLS to the name on 443", () => {
   assert.equal(loopbackUpstream("http://127.0.0.1:9000")!.target("x").secure, false);
   for (const bad of ["https://127.0.0.1:9000", "http://10.0.0.1:9000", "http://evil.example:80", "http://127.0.0.1", "http://127.0.0.1:0", "http://127.0.0.1:99999", "http://127.0.0.1:9000/x"]) assert.equal(loopbackUpstream(bad), null, bad);
-  assert.deepEqual(ONDEMAND.target("8081--d--a.ondemand.oerba.dev"), { host: "8081--d--a.ondemand.oerba.dev", port: 443, secure: true });
+  assert.deepEqual(ONDEMAND.target("8081--main--d--a.ondemand.oerba.dev"), { host: "8081--main--d--a.ondemand.oerba.dev", port: 443, secure: true });
 });
 
 // ---- the relay, against a stand-in for On-Demand on loopback -----------------------------------------------------------------
@@ -105,7 +149,7 @@ const stand = http.createServer((req, res) => {
       return;
     }
     if (req.url?.startsWith("/redirect")) { res.writeHead(302, { location: `https://${req.headers.host}/landed`, "set-cookie": "s=1" }); res.end(); return; }
-    res.writeHead(200, { "content-type": "application/json", "set-cookie": "s=1" });
+    res.writeHead(200, { "content-type": "application/json", "set-cookie": ["s=1; Path=/; Domain=x.ondemand.oerba.dev", "ondemand_session_token=LEAK; Path=/"] });
     res.end(JSON.stringify({ ok: true }));
   });
 });
@@ -165,10 +209,10 @@ test("a GET and a POST body pass through, by the workspace port's own name", asy
   assert.equal(post.status, 200);
   const [a, b] = seen.slice(before);
   assert.equal(a!.url, "/index.bundle?platform=ios");
-  assert.equal(a!.headers.host, `${f.remote}--demo--alice.ondemand.oerba.dev`);
+  assert.equal(a!.headers.host, `${f.remote}--main--demo--alice.ondemand.oerba.dev`);
   assert.equal(b!.method, "POST");
   assert.equal(b!.body, '{"stack":[1,2,3]}');
-  assert.equal(get.headers["set-cookie"], undefined, "a cookie the workspace sets is not planted on localhost");
+  assert.deepEqual(get.headers["set-cookie"], ["s=1; Path=/"], "the app's cookie lands on localhost, its Domain removed");
 });
 
 test("a websocket passes both ways", async () => {
@@ -180,7 +224,7 @@ test("a websocket passes both ways", async () => {
   assert.equal(echoed, "hello through the relay");
   socket.destroy();
   const last = seen.at(-1)!;
-  assert.equal(last.headers.host, `${f.remote}--demo--alice.ondemand.oerba.dev`);
+  assert.equal(last.headers.host, `${f.remote}--main--demo--alice.ondemand.oerba.dev`);
   assert.equal(last.headers.origin, undefined);
 });
 
@@ -233,15 +277,30 @@ test("no browser header, credential, forwarded header or token reaches the stand
   });
   const got = seen[before]!;
   assert.equal(got.url, "/x?keep=1");
-  for (const h of ["origin", "cookie", "authorization", "proxy-authorization", "on-demand-session-token", "sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest", "sec-fetch-user", "forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "tailscale-user-login"]) assert.equal(got.headers[h], undefined, h);
+  assert.equal(got.headers["cookie"], "session=abc");
+  for (const h of ["origin", "authorization", "proxy-authorization", "on-demand-session-token", "sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest", "sec-fetch-user", "forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "tailscale-user-login"]) assert.equal(got.headers[h], undefined, h);
   assert.equal(got.headers["x-keep"], "yes");
   assert.ok(!JSON.stringify(got).includes("SECRET"));
   // and the same for an upgrade
   const { socket } = await handshake(f.local, { origin: `http://localhost:${f.local}`, cookie: "a=b", authorization: "Bearer SECRET", "x-forwarded-host": "evil", "sec-websocket-protocol": "expo" });
   socket.destroy();
   const up = seen.at(-1)!;
-  for (const h of ["origin", "cookie", "authorization", "x-forwarded-host"]) assert.equal(up.headers[h], undefined, `ws ${h}`);
+  for (const h of ["origin", "authorization", "x-forwarded-host"]) assert.equal(up.headers[h], undefined, `ws ${h}`);
   assert.equal(up.headers["sec-websocket-protocol"], "expo");
+});
+
+test("a page of one forward may call another forward, and no other localhost port", async () => {
+  const api = await dev("api");
+  const web = await dev("web");
+  const before = seen.length;
+  const call = (origin: string, site = "same-site") => request(api.local, { headers: { origin, "sec-fetch-site": site, "sec-fetch-mode": "cors", "sec-fetch-dest": "empty" } });
+  assert.equal((await call(`http://localhost:${web.local}`)).status, 200);
+  assert.equal((await call(`http://127.0.0.1:${web.local}`)).status, 200);
+  const other = await freePort();
+  assert.equal((await call(`http://localhost:${other}`)).status, 403, "a localhost port the app is not forwarding");
+  assert.equal(seen.length, before + 2);
+  await relay.stop(web.id);
+  assert.equal((await call(`http://localhost:${web.local}`)).status, 403, "once that forward stops, its page is a stranger");
 });
 
 test("a redirect to the app's own name comes back to the forward", async () => {

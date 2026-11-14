@@ -9,7 +9,7 @@ import net from "node:net";
 import type { Duplex } from "node:stream";
 import { cleanPath, responseHeaders, upstreamHeaders, vet, type Upstream } from "./rules";
 
-export interface ForwardSpec { name: string; port: number; upstream: Upstream }
+export interface ForwardSpec { name: string; port: number; upstream: Upstream; /** Whether the app is forwarding this number on the Mac now. */ forwarded?: (n: number) => boolean }
 
 const GONE = 502;
 
@@ -84,7 +84,7 @@ export class Forward {
   }
 
   private request(req: http.IncomingMessage, res: http.ServerResponse): void {
-    const v = vet(req.headers, req.method ?? "", req.url, this.port);
+    const v = vet(req.headers, req.method ?? "", req.url, this.port, (n) => n === this.port || (this.spec.forwarded?.(n) ?? false));
     if (!v.ok) { refuse(res, v.status, v.why); req.resume(); return; }
     const { name } = this.spec;
     const t = this.spec.upstream.target(name);
@@ -109,7 +109,7 @@ export class Forward {
       if (socket.writable) socket.end(`HTTP/1.1 ${status} ${status === 403 ? "Forbidden" : status === 421 ? "Misdirected Request" : status === 400 ? "Bad Request" : "Bad Gateway"}\r\ncontent-type: text/plain\r\nconnection: close\r\n\r\nrefused (${why})\n`);
       else socket.destroy();
     };
-    const v = vet(req.headers, req.method ?? "", req.url, this.port);
+    const v = vet(req.headers, req.method ?? "", req.url, this.port, (n) => n === this.port || (this.spec.forwarded?.(n) ?? false));
     if (!v.ok) { stop(v.status, v.why); return; }
     if (String(req.headers["upgrade"] ?? "").toLowerCase() !== "websocket" || req.method !== "GET") { stop(400, "upgrade"); return; }
     const { name } = this.spec;
