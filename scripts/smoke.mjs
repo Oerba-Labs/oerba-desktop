@@ -17,6 +17,22 @@ const oerba = createServer((req, res) => {
     res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ known: true, handle: "", person: "nobody", may_act: false, github: "" }));
     return;
   }
+  if (req.url === "/gate") {
+    res.writeHead(200, { "content-type": "text/html" }).end(`<!doctype html><title>gate</title>
+<p><a id="blank" target="_blank" href="https://example.invalid/click-blank">new window</a></p>
+<p><a id="same" href="https://example.invalid/click-same">same frame</a></p>
+<iframe src="/sub" width="200" height="60"></iframe>`);
+    return;
+  }
+  if (req.url === "/sub") {
+    // A workspace door running somebody's code: it tries to open the browser, and to send the page above it away.
+    res.writeHead(200, { "content-type": "text/html" }).end(`<!doctype html><script>
+for (let i = 0; i < 3; i++) {
+  setTimeout(() => { try { window.open("https://example.invalid/sub-open"); } catch {} try { window.top.location = "https://example.invalid/sub-top"; } catch {} }, 100 * i);
+}</script>sub`);
+    return;
+  }
+  if (req.url === "/file") { res.writeHead(200, { "content-type": "application/octet-stream", "content-disposition": "attachment; filename=x.bin" }).end("x"); return; }
   res.writeHead(200, { "content-type": "text/html" }).end(page("stand-in Oerba"));
 });
 const stranger = createServer((_req, res) => res.writeHead(200, { "content-type": "text/html" }).end(page("a stranger")));

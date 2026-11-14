@@ -24,7 +24,7 @@ While the setup screen is open it asks Oerba again every 30 seconds, so an invit
 - It **deploys nothing** and has no way to.
 - It **holds no secret**: no token, key or password, and no address that is not public.
 - It **changes nothing on the computer** in setup: it never runs Tailscale's `up`, `login`, `set` or anything else that changes it, installs nothing and signs nobody in. The download button only opens a web page.
-- It gives remote pages **no bridge** to the app, the computer or any device (see `SECURITY.md`).
+- It gives remote pages **no bridge** to the app, the computer or any device, lets only Oerba's own page (after a press, a few a minute) send a link to the browser, and cancels every download (see `SECURITY.md`).
 
 ## Build and run
 

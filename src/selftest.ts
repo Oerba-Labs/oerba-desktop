@@ -4,7 +4,7 @@
 import { app, BrowserWindow, type WebContentsView, type WebPreferences } from "electron";
 import type { Config } from "./config";
 import type { NavPolicy } from "./policy/navigation";
-import { refusals, setRole } from "./shell/hardening";
+import { external, refusals, setRole } from "./shell/hardening";
 
 export interface Hooks {
   config: Config;
@@ -58,7 +58,7 @@ export async function runSelftest(h: Hooks): Promise<void> {
     check("a serial device request was refused", String(serial).startsWith("refused"), String(serial));
     const geo = await stranger.webContents.executeJavaScript("new Promise((r) => navigator.geolocation.getCurrentPosition(() => r('granted'), (e) => r('refused ' + e.code)))", true);
     check("a geolocation request was refused", String(geo).startsWith("refused"), String(geo));
-    check("the refusals were seen by the handlers", refusals.some((r) => r.includes("serial")) && refusals.some((r) => r.includes("geolocation")), refusals.join(" "));
+    check("the refusals were seen by the handlers", refusals.has("serial") && refusals.has("geolocation"), refusals.list.join(" "));
     stranger.destroy();
 
     // 3. Oerba answers, and the setup screen lets the person in by itself.
@@ -71,11 +71,53 @@ export async function runSelftest(h: Hooks): Promise<void> {
     check("Oerba's page has no bridge", none === "undefinedundefined", String(none));
 
     // 4. Oerba's page cannot be sent to another origin.
-    const before = refusals.length;
+    const before = refusals.total;
     void oerba.webContents.executeJavaScript(`location.href = ${JSON.stringify(`${other}/away`)}`);
-    await until("the navigation refused", () => refusals.length > before);
+    await until("the navigation refused", () => refusals.total > before);
     await sleep(300);
-    check("a navigation out of Oerba's page was refused", oerba.webContents.getURL() === `${h.policy.oerbaOrigin}/` && refusals.includes("navigate:main"), oerba.webContents.getURL());
+    check("a navigation out of Oerba's page was refused", oerba.webContents.getURL() === `${h.policy.oerbaOrigin}/` && refusals.has("navigate:main"), oerba.webContents.getURL());
+
+    // 5. Links out. Opening the browser is replaced by a recorder, so nothing real opens.
+    const opened: string[] = [];
+    const realOpen = external.open;
+    external.open = (url) => { opened.push(url); };
+    try {
+      await oerba.webContents.loadURL(`${h.policy.oerbaOrigin}/gate`);
+      await sleep(1500);   // the frame inside the page tries window.open and window.top.location, three times each
+      check("a frame inside Oerba's page opened nothing in the browser", opened.length === 0, opened.join(" "));
+      check("and its attempts were recorded as refused", refusals.has("linkout:origin") || refusals.has("navigate:main"), refusals.list.slice(-6).join(" "));
+
+      const before2 = opened.length;
+      await sleep(2200);   // let any press of earlier be stale: a script's call with no press is refused for want of one
+      await oerba.webContents.executeJavaScript("window.open('https://example.invalid/no-press')");
+      await sleep(300);
+      check("a call of Oerba's own page with no press opened nothing", opened.length === before2, opened.join(" "));
+
+      h.getWin()?.showInactive();   // synthetic presses are not delivered to a window that was never shown
+      oerba.webContents.focus();
+      await sleep(500);
+      const click = async (id: string): Promise<void> => {
+        const r = (await oerba.webContents.executeJavaScript(`(() => { const b = document.getElementById(${JSON.stringify(id)}).getBoundingClientRect(); return [Math.round(b.x + b.width / 2), Math.round(b.y + b.height / 2)]; })()`)) as [number, number];
+        const [x, y] = r;
+        oerba.webContents.sendInputEvent({ type: "mouseMove", x, y });
+        oerba.webContents.sendInputEvent({ type: "mouseDown", x, y, button: "left", clickCount: 1 });
+        oerba.webContents.sendInputEvent({ type: "mouseUp", x, y, button: "left", clickCount: 1 });
+        await sleep(500);
+      };
+      await click("blank");
+      check("a click on a new-window link in Oerba's own page opened the browser", opened.includes("https://example.invalid/click-blank"), opened.join(" ") + " | " + refusals.list.slice(-4).join(" "));
+      await click("same");
+      check("a click on a link out of Oerba's own page opened the browser, and the page stayed", opened.includes("https://example.invalid/click-same") && oerba.webContents.getURL() === `${h.policy.oerbaOrigin}/gate`, opened.join(" "));
+      check("each press opened one link", opened.length === 2, String(opened.length));
+    } finally {
+      external.open = realOpen;
+    }
+
+    // 6. A download is cancelled.
+    const dl = refusals.total;
+    oerba.webContents.downloadURL(`${h.policy.oerbaOrigin}/file`);
+    await until("the download refused", () => refusals.total > dl && refusals.has("download"));
+    check("a download was cancelled", true);
   } catch (e) {
     console.log(`FAIL ${(e as Error).message}`);
     failed++;

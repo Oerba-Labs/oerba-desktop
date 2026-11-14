@@ -13,7 +13,13 @@ only wires them in.
   (no other port, no credentials in the address). Its subframes may be `https://*.oerba.dev` (Oerba frames workspace doors on those names). Everything else, including
   redirects, `file:`, `data:` and `javascript:`, is refused. A contents the app did not name may go nowhere.
 - **Links out.** `window.open` never makes a window of ours. An `https:` address (with a host, no credentials) opens in the system browser with
-  `shell.openExternal`; any other scheme is dropped. A plain link out of Oerba's page, if it is `https:`, goes to the browser the same way and the page stays.
+  `shell.openExternal`, and any other scheme is dropped, but only when Oerba's own top frame asked for it, just after a key or mouse press in the window, one link
+  for each press, and at most five a minute. A frame inside Oerba's page (a workspace door runs a developer's code) can never open the browser or send the page away:
+  its requests are dropped and recorded. Electron does not say which frame called `window.open`, so the frame holding the focus stands for it. A plain link out of Oerba's
+  page, if it is `https:`, goes to the browser under the same rule and the page stays.
+- **No downloads.** Every download in every session is cancelled until a stage needs them.
+- **Command-line switches.** A packaged app that finds any `-` switch on its command line beyond macOS's own `-psn_` refuses to start, with a dialog saying why
+  (`src/policy/argv.ts`), so a launcher cannot loosen the shell with `--inspect`, `--no-sandbox` and the like. An unpackaged run is the developer's own and is not checked.
 - **Permissions.** Every permission request and check is refused (media, notifications, geolocation, clipboard read, serial, USB, HID, Bluetooth and any kind not
   known), and so is every device permission. The `select-serial-port`, `select-usb-device`, `select-hid-device` and `select-bluetooth-device` choosers choose nothing.
   **One exception:** `clipboard-sanitized-write` (copy buttons) for `app.oerba.dev`'s own top frame, since writing text reads nothing.
