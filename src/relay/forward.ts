@@ -11,9 +11,9 @@ import { cleanPath, interstitial, responseHeaders, upstreamHeaders, vet, type Up
 
 /** Limits of one forward. 256 connections each on 127.0.0.1 and ::1 is far above what one dev server's page opens (a browser holds six
     per host; a bundler a few more), and low enough that a runaway local program cannot take the app's descriptors. A request waits
-    for upstream at most 15 s to connect; more than 96 in flight (32 sockets and about 64 waiting) answers 503. A websocket is
+    for upstream at most 15 s to connect and, once connected, 300 s for the answer's headers (Metro's first bundle can take minutes), then 504; neither limit applies once headers have arrived (an event stream, a long download) or a websocket is up; more than 96 in flight (32 sockets and about 64 waiting) answers 503. A websocket is
     never cut for being idle: Metro's hot-reload socket lives as long as the editor. */
-export const LIMITS = { maxConnections: 256, connectMs: 15_000, maxInFlight: 96 };
+export const LIMITS = { maxConnections: 256, connectMs: 15_000, headerMs: 300_000, maxInFlight: 96 };
 
 export interface ForwardSpec {
   name: string; port: number; upstream: Upstream;
@@ -76,13 +76,20 @@ export class Forward {
 
   connectionLimit(): number | undefined { return this.servers[0]?.maxConnections; }
 
-  /** Gives a request or upgrade to upstream a time to connect: if no connection is made in time it is 502. */
-  private guard(up: http.ClientRequest, secure: boolean, fail: () => void): void {
+  /** Bounds a request to upstream: 15 s to connect (502) and 300 s from then to its headers (504). `fail` is called at most once. */
+  private guard(up: http.ClientRequest, secure: boolean, fail: (status: number, why: string) => void): void {
+    let settled = false;
+    const end = (status: number, why: string): void => { if (settled) return; settled = true; fail(status, why); up.destroy(); };
+    const timers: NodeJS.Timeout[] = [];
+    const clear = (): void => { settled = true; for (const t of timers) clearTimeout(t); };
+    up.once("response", clear);
+    up.once("upgrade", clear);
+    up.once("close", () => { for (const t of timers) clearTimeout(t); });
     up.once("socket", (sock) => {
-      if (!sock.connecting) return;   // a kept connection
-      const timer = setTimeout(() => { fail(); up.destroy(); }, this.limits.connectMs);
-      sock.once(secure ? "secureConnect" : "connect", () => clearTimeout(timer));
-      up.once("close", () => clearTimeout(timer));
+      const wait = (): void => { timers.push(setTimeout(() => end(504, "the workspace's name did not answer in time"), this.limits.headerMs)); };
+      if (!sock.connecting) { wait(); return; }   // a kept connection
+      timers.push(setTimeout(() => end(GONE, "the workspace's name did not connect in time"), this.limits.connectMs));
+      sock.once(secure ? "secureConnect" : "connect", () => { for (const t of timers) clearTimeout(t); timers.length = 0; if (!settled) wait(); });
     });
   }
 
@@ -117,7 +124,7 @@ export class Forward {
     if (!v.ok && v.why === "navigation") {
       // From another site: the relay's own page, nothing forwarded, no cookie set, and nothing of upstream's in it.
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", "x-frame-options": "DENY", "content-security-policy": "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" });
-      res.end(req.method === "HEAD" ? undefined : interstitial(this.port, req.url ?? "/"));
+      res.end(req.method === "HEAD" ? undefined : interstitial(this.port, String(req.headers["host"]), req.url ?? "/"));
       return;
     }
     if (!v.ok) { refuse(res, v.status, v.why); req.resume(); return; }
@@ -134,8 +141,10 @@ export class Forward {
       ures.pipe(res);
       ures.once("error", () => res.destroy());
     });
-    up.once("error", () => refuse(res, GONE, "the workspace's name could not be reached"));
-    this.guard(up, t.secure, () => refuse(res, GONE, "the workspace's name did not answer in time"));
+    let answered = false;
+    const answer = (status: number, why: string): void => { if (answered) return; answered = true; refuse(res, status, why); };
+    up.once("error", () => answer(GONE, "the workspace's name could not be reached"));
+    this.guard(up, t.secure, answer);
     res.once("close", () => { if (!up.destroyed && !res.writableFinished) up.destroy(); });
     req.once("error", () => up.destroy());
     req.pipe(up);
@@ -145,7 +154,7 @@ export class Forward {
     this.sockets.add(socket);
     socket.once("close", () => this.sockets.delete(socket));
     const stop = (status: number, why: string): void => {
-      if (socket.writable) socket.end(`HTTP/1.1 ${status} ${status === 403 ? "Forbidden" : status === 421 ? "Misdirected Request" : status === 400 ? "Bad Request" : "Bad Gateway"}\r\ncontent-type: text/plain\r\nconnection: close\r\n\r\nrefused (${why})\n`);
+      if (socket.writable) socket.end(`HTTP/1.1 ${status} ${status === 403 ? "Forbidden" : status === 421 ? "Misdirected Request" : status === 400 ? "Bad Request" : status === 504 ? "Gateway Timeout" : "Bad Gateway"}\r\ncontent-type: text/plain\r\nconnection: close\r\n\r\nrefused (${why})\n`);
       else socket.destroy();
     };
     const v = vet(req.headers, req.method ?? "", req.url, this.port, (n) => n === this.port || (this.spec.sibling?.(n) ?? false));
@@ -181,8 +190,10 @@ export class Forward {
       if (socket.writable) socket.write(`HTTP/1.1 ${ures.statusCode ?? GONE} ${String(ures.statusMessage ?? "").replace(/[\r\n]/g, " ")}\r\n${lines.join("\r\n")}\r\nconnection: close\r\n\r\n`);
       ures.pipe(socket);
     });
-    up.once("error", () => stop(GONE, "the workspace's name could not be reached"));
-    this.guard(up, t.secure, () => stop(GONE, "the workspace's name did not answer in time"));
+    let answered = false;
+    const answer = (status: number, why: string): void => { if (answered) return; answered = true; stop(status, why); };
+    up.once("error", () => answer(GONE, "the workspace's name could not be reached"));
+    this.guard(up, t.secure, answer);
     socket.once("close", () => up.destroy());
     socket.on("error", () => up.destroy());
     up.end();

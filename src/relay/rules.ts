@@ -84,7 +84,8 @@ export function vet(headers: Headers, method: string, url: string | undefined, p
   const site = fetchSite(headers, method, headers["origin"] !== undefined);
   if (site === "refuse") return { ok: false, status: 403, why: "fetch-site" };
   // Origin-form only: "/path?query". An absolute address, "*" or an authority would make the relay name somewhere itself.
-  if (typeof url !== "string" || !url.startsWith("/") || url.startsWith("//") || /[\u0000- \u007f]/.test(url)) return { ok: false, status: 400, why: "target" };
+  // A backslash is read as a slash by Chrome and Safari ("/\\evil.example" is "//evil.example"), so none is accepted, raw or as %5C.
+  if (typeof url !== "string" || url.includes("\\") || /%5c/i.test(url) || !url.startsWith("/") || url.startsWith("//") || /[\u0000- \u007f]/.test(url)) return { ok: false, status: 400, why: "target" };
   // A top-level navigation from another site is answered by the relay's own page, never forwarded: a dev server often changes state on a GET.
   if (site === "navigation") return { ok: false, status: 200, why: "navigation" };
   return { ok: true };
@@ -122,6 +123,17 @@ export function setCookieDown(line: string): string | null {
   const parts = line.split(";");
   if (onDemandCookie((parts[0] ?? "").split("=", 1)[0]!.trim())) return null;
   return parts.filter((p, i) => i === 0 || !/^\s*domain\s*=/i.test(p)).join(";");
+}
+
+/** Whether a Set-Cookie line deletes its cookie: a Max-Age of 0 or less, or an Expires in the past. Such a line names a cookie without setting it. */
+export function cookieDeletes(line: string, now = Date.now()): boolean {
+  for (const attr of line.split(";").slice(1)) {
+    const [k, ...rest] = attr.split("=");
+    const key = (k ?? "").trim().toLowerCase(), val = rest.join("=").trim();
+    if (key === "max-age" && /^-?[0-9]+$/.test(val) && Number(val) <= 0) return true;
+    if (key === "expires") { const t = Date.parse(val); if (!Number.isNaN(t) && t < now) return true; }
+  }
+  return false;
 }
 
 /** Whether a header name is one the relay never sends on. */
@@ -171,7 +183,7 @@ export function responseHeaders(raw: Headers, name: string, host: string, onCook
   for (const [k, v] of Object.entries(raw)) {
     const key = k.toLowerCase();
     if (v === undefined || HOP.has(key) || named.has(key) || key === "set-cookie2") continue;
-    if (key === "set-cookie") { const c = (Array.isArray(v) ? v : [v]).map(setCookieDown).filter((x): x is string => x !== null); for (const line of c) onCookie((line.split(";", 1)[0] ?? "").split("=", 1)[0]!.trim()); if (c.length > 0) out[key] = c; continue; }
+    if (key === "set-cookie") { const c = (Array.isArray(v) ? v : [v]).map(setCookieDown).filter((x): x is string => x !== null); for (const line of c) if (!cookieDeletes(line)) onCookie((line.split(";", 1)[0] ?? "").split("=", 1)[0]!.trim()); if (c.length > 0) out[key] = c; continue; }
     out[key] = v;
   }
   const loc = out["location"];
@@ -208,10 +220,12 @@ const esc = (t: string): string => t.replace(/&/g, "&amp;").replace(/</g, "&lt;"
 
 /** The page a cross-site top-level navigation is answered with, in place of forwarding it. The link is a same-origin one to the same
     path and query, so clicking it is a same-origin navigation, which passes. Nothing in it comes from upstream. */
-export function interstitial(port: number, pathAndQuery: string): string {
+export function interstitial(port: number, host: string, pathAndQuery: string): string {
   const shown = `localhost:${port}${pathAndQuery}`;
+  // Absolute, from the Host vet accepted (localhost, 127.0.0.1 or [::1] with this port) and a path that starts with one "/", so it cannot name another origin.
+  const href = `http://${host}${pathAndQuery}`;
   return `<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Oerba</title>
 <p>Opened from another site.</p>
-<p><a href="${esc(pathAndQuery)}" rel="noreferrer">Continue to ${esc(shown)}</a></p>
+<p><a href="${esc(href)}" rel="noreferrer">Continue to ${esc(shown)}</a></p>
 `;
 }

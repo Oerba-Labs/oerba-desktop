@@ -4,7 +4,7 @@ import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import { createHash } from "node:crypto";
-import { AGENT, cleanPath, cookieUpstream, setCookieDown, fetchSiteAllowed, hostAllowed, loopbackUpstream, neverSent, ONDEMAND, originAllowed, responseHeaders, rewriteLocation, upstreamHeaders, upstreamName, vet } from "../src/relay/rules";
+import { AGENT, cleanPath, cookieDeletes, cookieUpstream, setCookieDown, fetchSiteAllowed, hostAllowed, loopbackUpstream, neverSent, ONDEMAND, originAllowed, responseHeaders, rewriteLocation, upstreamHeaders, upstreamName, vet } from "../src/relay/rules";
 import { COMMON_PORTS, RelayManager } from "../src/relay/manager";
 import { buildMenu, labelsOf } from "../src/present/menu";
 
@@ -149,6 +149,8 @@ const stand = http.createServer((req, res) => {
       setTimeout(() => res.end("last"), 700);
       return;
     }
+    if (req.url?.startsWith("/hang")) return;   // connected and silent
+    if (req.url?.startsWith("/cookies")) { res.writeHead(200, { "set-cookie": ["kept=1; Path=/", "gone=; Max-Age=0", "neg=x; Max-Age=-5", "old=x; Expires=Thu, 01 Jan 1970 00:00:00 GMT", "future=1; Expires=Fri, 01 Jan 2100 00:00:00 GMT", "ondemand_session_token=z"] }); res.end("{}"); return; }
     if (req.url?.startsWith("/redirect")) { res.writeHead(302, { location: `https://${req.headers.host}/landed`, "set-cookie": "s=1" }); res.end(); return; }
     res.writeHead(200, { "content-type": "application/json", "set-cookie": ["session=1; Path=/; Domain=x.ondemand.oerba.dev", "ondemand_session_token=LEAK; Path=/"] });
     res.end(JSON.stringify({ ok: true }));
@@ -318,7 +320,7 @@ test("a cross-site navigation is answered by the relay's own page, forwarded now
     assert.equal(r.headers["cache-control"], "no-store");
     assert.equal(r.headers["set-cookie"], undefined);
     assert.ok(r.body.includes("Opened from another site."));
-    assert.ok(r.body.includes(`href="/logout?next=%22&gt;&lt;script&gt;alert(1)&lt;/script&gt;&amp;a=&#39;b&#39;"`), r.body);
+    assert.ok(r.body.includes(`href="http://127.0.0.1:${f.local}/logout?next=%22&gt;&lt;script&gt;alert(1)&lt;/script&gt;&amp;a=&#39;b&#39;"`), r.body);
     assert.ok(!r.body.includes("<script>"));
     assert.ok(r.body.includes(`Continue to localhost:${f.local}/logout`));
   }
@@ -476,4 +478,53 @@ test("the menu: a started workspace offers its page and its ports, and a running
   const item = buildMenu({ ...base, forwards: [{ id: "alice/demo:8081", owner: "alice", name: "demo", remote: 8081, local: 8082 }] }).find((i) => i.label === "Workspaces")!.submenu![0]!.submenu!.find((i) => i.label.endsWith("(stop)"))!;
   assert.deepEqual(item.action, { type: "stop", id: "alice/demo:8081" });
   assert.ok(COMMON_PORTS.includes(8081));
+});
+
+test("a backslash in the target is refused, and the Continue link is absolute, built from the accepted Host", async () => {
+  const f = await dev();
+  const before = seen.length;
+  for (const path of ["/\\evil.example/x", "/a\\b", "/%5Cevil.example/x", "/%5cevil", "/ok?next=\\x"]) {
+    assert.equal((await request(f.local, { path })).status, 400, path);
+    assert.equal((await request(f.local, { path, headers: { "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" } })).status, 400, `navigation ${path}`);
+  }
+  assert.equal(seen.length, before);
+  const r = await request(f.local, { path: "/x?y=1", host: `LOCALHOST:${f.local}`, headers: { "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" } });
+  assert.ok(r.body.includes(`href="http://LOCALHOST:${f.local}/x?y=1"`) || r.body.includes(`href="http://localhost:${f.local}/x?y=1"`), r.body);
+  assert.ok(!/href="\/[^"]/.test(r.body), "no origin-relative link");
+});
+
+test("a Set-Cookie that deletes does not enter the workspace's cookie names", async () => {
+  assert.equal(cookieDeletes("a=; Max-Age=0"), true);
+  assert.equal(cookieDeletes("a=; max-age=-1"), true);
+  assert.equal(cookieDeletes("a=; Expires=Thu, 01 Jan 1970 00:00:00 GMT"), true);
+  assert.equal(cookieDeletes("a=1; Max-Age=3600"), false);
+  assert.equal(cookieDeletes("a=1; Expires=Fri, 01 Jan 2100 00:00:00 GMT"), false);
+  assert.equal(cookieDeletes("a=1"), false);
+  const m = new RelayManager(upstream);
+  const f = (await m.start("alice", "crumbs", Math.max(await freePort(), 1024)))!;
+  await request(f.local, { path: "/cookies" });
+  await request(f.local, { headers: { cookie: "kept=1; gone=1; neg=1; old=1; future=1; ondemand_session_token=z" } });
+  assert.equal(seen.at(-1)!.headers.cookie, "kept=1; future=1");
+  await m.stopAll();
+});
+
+test("a connected but silent upstream is answered 504 whole, and an upgrade the same; neither limit touches a response that began", async () => {
+  const m = new RelayManager(upstream, () => undefined, { headerMs: 300 });
+  const f = (await m.start("alice", "silent", Math.max(await freePort(), 1024)))!;
+  const t0 = Date.now();
+  const r = await request(f.local, { path: "/hang" });
+  assert.equal(r.status, 504);
+  assert.ok(r.body.includes("did not answer in time"), "the body is sent whole: " + r.body);
+  assert.ok(Date.now() - t0 < 3000);
+  // headers arrived, then a body slower than the limit: not cut
+  const slow = await request(f.local, { path: "/slow" });
+  assert.equal(slow.body, "first;last");
+  // a websocket stays up past it
+  const { head, socket } = await handshake(f.local);
+  assert.match(head, /^HTTP\/1\.1 101 /);
+  await new Promise((r2) => setTimeout(r2, 600));
+  const echoed = await new Promise<string>((resolve) => { socket.once("data", (c) => resolve(c.toString())); socket.write("still here"); });
+  assert.equal(echoed, "still here");
+  socket.destroy();
+  await m.stopAll();
 });
