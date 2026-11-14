@@ -1,26 +1,29 @@
 #!/usr/bin/env bash
-# Looks at the unsigned package npm run pack:unsigned made (release/mac-arm64/Oerba.app): which fuses are set, whether any of the
-# self-test is in app.asar, and whether the packed app starts and draws its setup screen. It starts the app from a COPY signed
-# ad hoc in a scratch folder, because an unsigned arm64 app is killed by macOS. Nothing is signed with the owner's identity,
-# nothing is sent to Apple or GitHub, and the release folder is not changed.
+# Looks at the unsigned package npm run pack:unsigned made (release/mac-arm64/Oerba.app): that its fuses are as configured, that
+# none of the self-test is in app.asar, that latest-mac.yml can be reduced to the zip, and that the packed app starts and draws its
+# setup screen. It starts the app from a COPY signed ad hoc in a scratch folder, because an unsigned arm64 app is killed by macOS.
+# Nothing is signed with the owner's identity, nothing is sent to Apple or GitHub, and the release folder is not changed.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+. scripts/lib-pack.sh
 app="release/mac-arm64/Oerba.app"
 [ -d "$app" ] || { echo "No $app: run npm run pack:unsigned first." >&2; exit 1; }
+version="$(node -p "require('./package.json').version")"
 scratch="$(mktemp -d)"
 trap 'pkill -f "$scratch/Oerba.app/Contents/MacOS/Oerba" 2>/dev/null || true; rm -rf "$scratch"' EXIT
 
 echo "== fuses"
-node node_modules/@electron/fuses/dist/bin.js read --app "$app"
+assert_fuses "$app" || exit 1
 
 echo "== the self-test is not in app.asar"
-npx --no-install @electron/asar extract "$app/Contents/Resources/app.asar" "$scratch/asar" >/dev/null 2>&1
-bad=0
-for needle in "--selftest" "selftest.ts" "oerba-origin" "other-origin" "present-ms" "smoke:" "example.invalid" "stand-in" "__open" "runSelftest"; do
-  if grep -rqF -- "$needle" "$scratch/asar/main.js" "$scratch/asar/setup" "$scratch/asar/update" "$scratch/asar/preload-setup.js" "$scratch/asar/preload-update.js"; then echo "FOUND in the app code: $needle"; bad=1; else echo "absent: $needle"; fi
-done
-for f in test scripts src; do [ -e "$scratch/asar/$f" ] && { echo "FOUND in app.asar: $f/"; bad=1; }; done
-[ "$bad" = 0 ] || { echo "The self-test or the tests are in the package." >&2; exit 1; }
+assert_no_selftest "$app" "$scratch" || { echo "The self-test, tests or sources are in the package." >&2; exit 1; }
+
+echo "== latest-mac.yml reduces to the zip alone, checked against the zip"
+mkdir "$scratch/rel"
+cp release/latest-mac.yml "$scratch/rel/"
+ln -s "$PWD/release/Oerba-$version-arm64-mac.zip" "$scratch/rel/"
+node scripts/finish-latest.mjs "$scratch/rel" "$version"
+grep -c "url:" "$scratch/rel/latest-mac.yml" | grep -qx 1 || { echo "latest-mac.yml still lists more than the zip" >&2; exit 1; }
 
 echo "== the packed app starts and draws its setup screen"
 cp -R "$app" "$scratch/Oerba.app"

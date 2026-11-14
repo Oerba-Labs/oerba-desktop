@@ -6,9 +6,9 @@ only wires them in.
 
 - **Settings of every view:** `contextIsolation` on, `sandbox` on, no `nodeIntegration` (also not in workers or subframes), no `webviewTag`
   (a `<webview>` attach is refused), `webSecurity` on, no insecure content.
-- **No bridge for remote pages.** No preload is given to Oerba's view or to any page but the bundled setup screen. The setup preload exposes
-  three calls (`getState`, `onState`, `act`) through `contextBridge`, does nothing unless it runs in the bundled setup page's top frame, and the main process
-  checks the sender's frame again on every message.
+- **No bridge for remote pages.** No preload is given to Oerba's view or to any page but the app's own two, the bundled setup screen and the update window. The setup preload exposes
+  three calls (`getState`, `onState`, `act`), and the update window's own preload three (`getState`, `onState`, `act`), through `contextBridge`. Each does nothing unless it runs in its own page's top frame,
+  and the main process checks the sender's frame again on every message.
 - **Navigation.** The setup view's main frame may only be the bundled setup page. Oerba's view's main frame may only be `https://app.oerba.dev`
   (no other port, no credentials in the address). Its subframes may be `https://*.oerba.dev` (Oerba frames workspace doors on those names). Everything else, including
   redirects, `file:`, `data:` and `javascript:`, is refused. A contents the app did not name may go nowhere.
@@ -43,9 +43,12 @@ only wires them in.
   keychain profile, then stapled. The only entitlement is `com.apple.security.cs.allow-jit`, which V8 needs to compile JavaScript at run time; `disable-library-validation`,
   `allow-unsigned-executable-memory`, `allow-dyld-environment-variables` and every device or file entitlement are not given.
 - **Updates ask, and a forged one is refused.** electron-updater runs with `autoDownload` and `autoInstallOnAppQuit` off. The feed is the `publish` setting of the build (GitHub, `Oerba-Labs/oerba-desktop`), written
-  into the app as `app-update.yml`; the app never calls `setFeedURL`, and nothing from a page or the command line reaches it. A package from anywhere else is refused twice: electron-updater checks the downloaded
-  zip against the SHA-512 in `latest-mac.yml`, and macOS's Squirrel.Mac then installs it only if its code signature satisfies the running app's own requirement (the same team's Developer ID), so an unsigned
-  or differently signed zip is not installed. Release notes are shown as plain text (`textContent`), tags and entities stripped. The update window has its own three-call bridge, given to it alone.
+  into the app as `app-update.yml`; the app never calls `setFeedURL`, and nothing from a page or the command line reaches it. What refuses a forged update is **TLS to GitHub** (the feed and the zip are fetched
+  over it) and **Squirrel.Mac**, which installs a new app only if its code signature satisfies the running app's own requirement (signed by the same team's Developer ID). The SHA-512 in `latest-mac.yml`
+  guards against a corrupt or truncated download only: it comes from the same place as the zip, so it proves nothing about who made it. Release notes are shown as plain text (`textContent`), tags and entities stripped.
+  The update window has its own three-call bridge, given to it alone.
+- **Packing downloads tools, and uploads nothing.** `npm run pack:unsigned` (and the release build) makes electron-builder fetch its helper tools (icons, 7zip, dmgbuild) from GitHub, without any credential;
+  it sends nothing anywhere. Only `scripts/release.sh` talks to Apple, by notarytool, for the owner's own build.
 - **The self-test override** of Oerba's address needs both an unpackaged app and an explicit `--selftest` flag, and accepts only a loopback `http` origin.
 - **The app holds no secret** and names no address that is not public.
 

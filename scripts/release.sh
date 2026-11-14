@@ -5,17 +5,23 @@
 # What it does:
 #   1. refuses a dirty working tree, a version already tagged, or a commit that is not on origin/main;
 #   2. installs exactly what package-lock.json says (npm ci --ignore-scripts, then Electron's own install script) and runs the tests;
-#   3. builds the packaged bundle and packs, signs (the keychain's "Developer ID Application" identity) and notarises
-#      (notarytool, keychain profile "oerba-notary", then staples) the app, the dmg and the zip, into release/;
-#   4. verifies them: codesign --verify --deep --strict, spctl on the app and on the dmg, xcrun stapler validate;
-#   5. prints each file with its SHA-256, latest-mac.yml, and the command that makes the GitHub release.
+#   3. builds the packaged bundle and packs the app, the dmg and the zip with electron-builder, signing them with the keychain's
+#      "Developer ID Application" identity and notarising and stapling the APP (notarytool, keychain profile "oerba-notary");
+#   4. notarises and staples the DMG as well (xcrun notarytool submit --wait, then xcrun stapler staple). Stapling changes the dmg's
+#      bytes, so its entry in latest-mac.yml, and its blockmap, would no longer match: latest-mac.yml is rewritten to list the
+#      zip alone, checked against the zip on disk, and the dmg's blockmap is not kept. The Mac updater installs from the zip;
+#   5. checks, and stops at the first that fails: codesign --verify --deep --strict on the app; spctl on the app and
+#      (-t install) on the dmg; xcrun stapler validate on the app and the dmg; every fuse read back from the app is as
+#      configured; and the packed app.asar holds none of the self-test's strings;
+#   6. prints each file's SHA-256 (after stapling), latest-mac.yml, and the command that makes the GitHub release.
 #
 # What it will not do: publish anything, create a tag or a release, upload to GitHub or push; it runs electron-builder with
-# --publish never. Apple is contacted by notarytool alone, for the notarisation of this build.
+# --publish never. Apple is contacted by notarytool alone, for the notarisation of this build's app and dmg.
 #
 # The next command is the owner's, and is printed at the end; it makes a DRAFT release, to be read on GitHub and published there.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+. scripts/lib-pack.sh
 
 fail() { echo "release: $*" >&2; exit 1; }
 
@@ -48,19 +54,28 @@ dmg="release/Oerba-$version-arm64.dmg"
 zip="release/Oerba-$version-arm64-mac.zip"
 [ -d "$app" ] && [ -f "$dmg" ] && [ -f "$zip" ] && [ -f release/latest-mac.yml ] || fail "electron-builder did not leave the files expected in release/."
 
-echo "== verify"
+echo "== notarise and staple the dmg (Apple is contacted here)"
+xcrun notarytool submit "$dmg" --keychain-profile oerba-notary --wait
+xcrun stapler staple "$dmg"
+# Its bytes changed: the zip alone is what latest-mac.yml may offer, and the dmg's blockmap no longer describes the dmg.
+rm -f "$dmg.blockmap"
+node scripts/finish-latest.mjs release "$version"
+
+echo "== verify (each of these stops the release)"
 codesign --verify --deep --strict --verbose=2 "$app"
 spctl -a -vvv "$app"
 xcrun stapler validate "$app"
-# The dmg is not itself signed or notarised (the app inside is, and is stapled); spctl may say so. Shown, not fatal.
-spctl -a -vvv -t install "$dmg" || echo "(spctl on the dmg: see the note above in the header; the app inside passed)"
-xcrun stapler validate "$dmg" || echo "(the dmg itself carries no ticket; the app inside does)"
+spctl -a -vvv -t install "$dmg"
+xcrun stapler validate "$dmg"
+echo "-- fuses read back from the app"
+assert_fuses "$app" || fail "a fuse is not as configured."
+echo "-- the self-test is not in the packed app.asar"
+work="$(mktemp -d)"
+assert_no_selftest "$app" "$work" || { rm -rf "$work"; fail "the self-test, tests or sources are in app.asar."; }
+rm -rf "$work"
 
-echo "== read the fuses back"
-node node_modules/@electron/fuses/dist/bin.js read --app "$app"
-
-echo "== files"
-( cd release && shasum -a 256 "Oerba-$version-arm64.dmg" "Oerba-$version-arm64-mac.zip" "Oerba-$version-arm64.dmg.blockmap" "Oerba-$version-arm64-mac.zip.blockmap" latest-mac.yml )
+echo "== files, after stapling"
+( cd release && shasum -a 256 "Oerba-$version-arm64.dmg" "Oerba-$version-arm64-mac.zip" "Oerba-$version-arm64-mac.zip.blockmap" latest-mac.yml )
 echo "== latest-mac.yml"
 cat release/latest-mac.yml
 
@@ -79,7 +94,7 @@ Then, as a DRAFT release (read it on GitHub, then publish it there):
 
   gh release create $tag \\
     $dmg $zip \\
-    $zip.blockmap $dmg.blockmap release/latest-mac.yml \\
+    $zip.blockmap release/latest-mac.yml \\
     --target $commit --draft --title "Oerba Desktop $version" --notes-file $notes
 
 MSG

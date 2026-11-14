@@ -35,7 +35,7 @@ mac:
   minimumSystemVersion: "13.0"
 
 dmg:
-  sign: false                            # the app inside is signed and notarised; a signed dmg adds nothing the notarised app lacks
+  sign: true                             # signed here; scripts/release.sh then notarises and staples the dmg itself
 
 # Where electron-updater looks, written into the app as app-update.yml. Nothing in the app sets or changes it.
 publish:

@@ -60,7 +60,7 @@ override is honoured only when the app is **not packaged** and `--selftest` is g
 
 ## Packing and releasing (stage 4)
 
-`npm run pack:unsigned` builds the packaged bundle (`build/app/`, which holds no self-test, tests or scripts) and packs an **unsigned** `Oerba.app`, dmg and zip into `release/` for arm64. It signs nothing and talks to no Apple or GitHub service.
+`npm run pack:unsigned` builds the packaged bundle (`build/app/`, which holds no self-test, tests or scripts) and packs an **unsigned** `Oerba.app`, dmg and zip into `release/` for arm64. It signs nothing and sends nothing to Apple or GitHub (electron-builder does download its helper tools from GitHub, without credentials).
 `npm run verify:pack` then reads the fuses back, searches `app.asar` for the self-test, and starts a scratch copy (signed ad hoc, since macOS kills an unsigned arm64 app) to see that it draws its setup screen and that a second launch only exits.
 
 Releasing is the owner's, on the Mac that holds the signing identity (a "Developer ID Application" certificate) and a notarytool keychain profile named `oerba-notary`:
@@ -69,12 +69,12 @@ Releasing is the owner's, on the Mac that holds the signing identity (a "Develop
 bash scripts/release.sh
 ```
 
-It refuses a dirty tree, a tag that exists, or a commit not on `origin/main`; installs and tests; packs, signs, notarises and staples with electron-builder; verifies with `codesign`, `spctl` and `stapler`; and prints every file's SHA-256, `latest-mac.yml` and the next command. It publishes nothing. That command makes a **draft** GitHub release, to be read and published on GitHub:
+It refuses a dirty tree, a tag that exists, or a commit not on `origin/main`; installs and tests; packs, signs, notarises and staples the app with electron-builder; signs, notarises and staples the dmg too; rewrites `latest-mac.yml` to list the zip alone (stapling changed the dmg's bytes, and the Mac updater installs from the zip), checked against the zip on disk; stops unless `codesign`, `spctl` (app and dmg), `stapler validate` (app and dmg), the fuses read back and a search of the packed `app.asar` for the self-test all pass; and prints every file's SHA-256 (after stapling), `latest-mac.yml` and the next command. It publishes nothing. That command makes a **draft** GitHub release, to be read and published on GitHub:
 
 ```sh
 gh release create v<version> \
   release/Oerba-<version>-arm64.dmg release/Oerba-<version>-arm64-mac.zip \
-  release/Oerba-<version>-arm64-mac.zip.blockmap release/Oerba-<version>-arm64.dmg.blockmap release/latest-mac.yml \
+  release/Oerba-<version>-arm64-mac.zip.blockmap release/latest-mac.yml \
   --target <commit> --draft --title "Oerba Desktop <version>" --notes-file release/notes-v<version>.md
 ```
 
