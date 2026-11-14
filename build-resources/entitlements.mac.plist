@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Chromium's V8 compiles JavaScript to machine code at run time, which the hardened runtime forbids unless the app says
+       it may. This is the only entitlement Electron's own signing guide asks of the app and its helpers. Not given, on
+       purpose: disable-library-validation (nothing here loads a library signed by another team), allow-unsigned-executable-memory,
+       allow-dyld-environment-variables, and every device, network-server and file-access entitlement. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+</dict>
+</plist>

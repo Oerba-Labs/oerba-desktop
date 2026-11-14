@@ -45,7 +45,7 @@ Node 22 or newer, on a Mac. Every dependency is pinned to an exact version in `p
 ```sh
 npm ci --ignore-scripts                    # installs exactly the locked packages, running none of their scripts
 node node_modules/electron/install.js      # fetches Electron's binary alone; it checks the binary's published sum
-npm run build                              # type-checks, then compiles with esbuild into dist/
+npm run build                              # type-checks, then compiles with esbuild into dist/ (the development bundle, with the self-test)
 npm start                                  # builds and opens the app
 npm test                                   # builds, then runs the unit tests with node --test
 npm run smoke                              # opens the real app against stand-in servers on loopback, and checks the shell
@@ -58,20 +58,44 @@ Do not run `npm install` to change versions: it rewrites the lockfile. To move a
 override is honoured only when the app is **not packaged** and `--selftest` is given, and only for a loopback `http` address
 (`src/config.ts`, tested in `test/config.test.ts`); a packaged app ignores every such flag.
 
+## Packing and releasing (stage 4)
+
+`npm run pack:unsigned` builds the packaged bundle (`build/app/`, which holds no self-test, tests or scripts) and packs an **unsigned** `Oerba.app`, dmg and zip into `release/` for arm64. It signs nothing and talks to no Apple or GitHub service.
+`npm run verify:pack` then reads the fuses back, searches `app.asar` for the self-test, and starts a scratch copy (signed ad hoc, since macOS kills an unsigned arm64 app) to see that it draws its setup screen and that a second launch only exits.
+
+Releasing is the owner's, on the Mac that holds the signing identity (a "Developer ID Application" certificate) and a notarytool keychain profile named `oerba-notary`:
+
+```sh
+bash scripts/release.sh
+```
+
+It refuses a dirty tree, a tag that exists, or a commit not on `origin/main`; installs and tests; packs, signs, notarises and staples with electron-builder; verifies with `codesign`, `spctl` and `stapler`; and prints every file's SHA-256, `latest-mac.yml` and the next command. It publishes nothing. That command makes a **draft** GitHub release, to be read and published on GitHub:
+
+```sh
+gh release create v<version> \
+  release/Oerba-<version>-arm64.dmg release/Oerba-<version>-arm64-mac.zip \
+  release/Oerba-<version>-arm64-mac.zip.blockmap release/Oerba-<version>-arm64.dmg.blockmap release/latest-mac.yml \
+  --target <commit> --draft --title "Oerba Desktop <version>" --notes-file release/notes-v<version>.md
+```
+
+The package is arm64 only: every Mac Oerba's people use is Apple silicon, and a universal build would double a 125 MB download for none of them.
+
+### Updates
+
+A packaged app asks GitHub Releases for `latest-mac.yml` once the person is in, and every six hours. It never downloads or installs by itself. When a newer version is found, the menu bar item gains "Update to <version>…", which opens a small window of the app's own with the release's notes (shown as plain text) and two buttons: **Download**, and, once downloaded, **Restart now**; **Later** closes it. Nothing is installed until Restart now is pressed. An unpackaged run never looks. The feed is fixed by the build (`publish` in `electron-builder.yml`); nothing in the app, on the command line or from a page can change it.
+
 ## Layout
 
 - `src/policy/`: the shell's rules as small pure modules (navigation, permissions, external links), tested without Electron.
 - `src/setup/`: what the setup screen checks (`probes.ts`), how it reads `/api/who` (`who.ts`) and how the steps follow from it (`state.ts`).
 - `src/present/`: the menu bar, notifications and badge: reading `/api/now` (`now.ts`), what is worth a notification (`notify.ts`), the menu as data (`menu.ts`), routes (`routes.ts`), plain text (`text.ts`), and `presence.ts` wiring them to Electron.
+- `src/update/`: when to check, the update state, release notes as plain text, and the window.
 - `src/shell/hardening.ts`: wires the policies to Electron. `src/main.ts`: the window. `src/preload-setup.ts`: the setup page's three calls.
 - `static/`, `src/renderer/`: the setup screen's HTML, CSS (Oerba's Quiet Slate) and TypeScript.
 
-## Stages to come
+## Stages
 
-Stage 1 was the shell and the setup screen; stage 3 (this version, 0.2.0) adds the menu bar item, notifications, the dock badge and the
-shortcuts. Later: packing, signing and notarising with electron-builder; an updater that asks (electron-updater, with GitHub
-Releases); then every workspace's pages kept open side by side, reaching the computer (forwarded ports, folders), and simulators.
-Each is its own stage.
+Stage 1 was the shell and the setup screen; stage 3 the menu bar item, notifications, dock badge and shortcuts; stage 4 (this version, 0.3.0) packing, signing, notarising and updates that ask. Later: every workspace's pages kept open side by side, reaching the computer (forwarded ports, folders), and simulators. Each is its own stage.
 
 ## Licence
 

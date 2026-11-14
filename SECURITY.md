@@ -31,6 +31,21 @@ only wires them in.
   workspace and owner names that match a plain-name pattern, URL-encoded, and is checked again before it is put in the page's address, by changing only the hash. Every string from Oerba
   is cut to a length and reduced to plain printable characters (no control, bidirectional or private-use characters) before it reaches the menu, a notification or the badge.
   No bridge is given to any page for this. A global shortcut sends ⌘K to Oerba's own page with `sendInputEvent`, as a key press, and nothing else. The login item changes only when the person ticks it.
+- **Fuses, set in the packed app** (read back by `npm run verify:pack`): `RunAsNode` off, `EnableNodeCliInspectArguments` off, `EnableNodeOptionsEnvironmentVariable` off,
+  `EnableEmbeddedAsarIntegrityValidation` on, `OnlyLoadAppFromAsar` on, `GrantFileProtocolExtraPrivileges` off, `EnableCookieEncryption` on. With the last off, a page inside `app.asar` does not load by
+  `file://` at all, so the app's own pages (setup and update) are served by a scheme of the app's own, `oerba-app://app/`, registered standard and secure, from a fixed list of six files
+  (`src/policy/bundled.ts`); a page cannot ask it for anything else in the package.
+- **Sandbox, single instance.** `app.enableSandbox()` before anything starts. One instance holds a lock; a second launch only shows the first one's window and its arguments are never read.
+  Screen and window recording requests (`getDisplayMedia`) are refused.
+- **The self-test is not in the packaged app.** The packaged bundle is built with `__SELFTEST__` false and syntax simplification on, which removes the self-test, its stand-ins and its flags from the code;
+  `npm run verify:pack` searches the packed `app.asar` for their strings. Tests and scripts are not in the package at all (only `build/app/` is packed), and electron-updater is bundled into `main.js`.
+- **Signed with the hardened runtime**, under the owner's "Developer ID Application" identity, found in the keychain by its kind (no name, hash or team is written here), and notarised with notarytool through a
+  keychain profile, then stapled. The only entitlement is `com.apple.security.cs.allow-jit`, which V8 needs to compile JavaScript at run time; `disable-library-validation`,
+  `allow-unsigned-executable-memory`, `allow-dyld-environment-variables` and every device or file entitlement are not given.
+- **Updates ask, and a forged one is refused.** electron-updater runs with `autoDownload` and `autoInstallOnAppQuit` off. The feed is the `publish` setting of the build (GitHub, `Oerba-Labs/oerba-desktop`), written
+  into the app as `app-update.yml`; the app never calls `setFeedURL`, and nothing from a page or the command line reaches it. A package from anywhere else is refused twice: electron-updater checks the downloaded
+  zip against the SHA-512 in `latest-mac.yml`, and macOS's Squirrel.Mac then installs it only if its code signature satisfies the running app's own requirement (the same team's Developer ID), so an unsigned
+  or differently signed zip is not installed. Release notes are shown as plain text (`textContent`), tags and entities stripped. The update window has its own three-call bridge, given to it alone.
 - **The self-test override** of Oerba's address needs both an unpackaged app and an explicit `--selftest` flag, and accepts only a loopback `http` origin.
 - **The app holds no secret** and names no address that is not public.
 

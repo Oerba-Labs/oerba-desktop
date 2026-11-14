@@ -1,0 +1,53 @@
+# What is packed, and how it is signed. Secrets are not here: the signing identity is found in the Mac's keychain
+# ("Developer ID Application", by what the keychain holds), and notarisation reads the keychain profile named by the
+# APPLE_KEYCHAIN_PROFILE environment variable (scripts/release.sh sets it). Every build is run with --publish never.
+appId: dev.oerba.desktop
+productName: Oerba
+copyright: Oerba Labs
+
+# Only the packaged bundle, which has no self-test, no tests and no scripts (scripts/build.mjs --app).
+directories:
+  app: build/app
+  output: release
+  buildResources: build-resources
+
+# The Electron that npm ci fetched and checked, so packing downloads no Electron of its own.
+electronVersion: 44.10.0
+electronDist: node_modules/electron/dist
+
+asar: true
+compression: normal
+files:
+  - "**/*"
+  - "!**/*.map"
+
+mac:
+  category: public.app-category.developer-tools
+  icon: build-resources/icon.png
+  target:
+    - { target: dmg, arch: arm64 }
+    - { target: zip, arch: arm64 }      # the zip is what electron-updater installs from, the dmg is what people download
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build-resources/entitlements.mac.plist
+  entitlementsInherit: build-resources/entitlements.mac.plist
+  notarize: true                         # runs only when APPLE_KEYCHAIN_PROFILE is set; see scripts/release.sh
+  minimumSystemVersion: "13.0"
+
+dmg:
+  sign: false                            # the app inside is signed and notarised; a signed dmg adds nothing the notarised app lacks
+
+# Where electron-updater looks, written into the app as app-update.yml. Nothing in the app sets or changes it.
+publish:
+  provider: github
+  owner: Oerba-Labs
+  repo: oerba-desktop
+
+electronFuses:
+  runAsNode: false                                  # ELECTRON_RUN_AS_NODE turns the binary into a Node
+  enableNodeCliInspectArguments: false              # --inspect and its kin
+  enableNodeOptionsEnvironmentVariable: false       # NODE_OPTIONS
+  enableEmbeddedAsarIntegrityValidation: true       # app.asar is checked against the hash in Info.plist
+  onlyLoadAppFromAsar: true                         # no loose app folder beside it
+  grantFileProtocolExtraPrivileges: false           # file:// pages get a browser's privileges and no more
+  enableCookieEncryption: true
