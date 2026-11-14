@@ -1,0 +1,39 @@
+/* The values are Oerba's Quiet Slate, copied from the lab's fburl/static/tokens.css (design/tokens.css, the oerba lists),
+   light and dark. Geist is not bundled here; the system face stands in until the app ships fonts. */
+:root {
+  --ground: #F6F7F9;  --surface: #FFFFFF;  --sunk: #EEF0F3;  --rule: #E3E6EB;
+  --ink: #12141A;  --ink2: #3A4150;  --muted: #596071;
+  --accent: #3451D1;  --onacc: #FFFFFF;  --accent-soft: #E9EDFC;
+  --done: #17703F;  --done-soft: #E6F4EC;
+  --warn: #8A5200;  --warn-soft: #FCF0DA;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --radius: 6px;  --radius-lg: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #0C0E12;  --surface: #14171C;  --sunk: #1B1F26;  --rule: #262B34;
+    --ink: #ECEEF2;  --ink2: #C5CAD4;  --muted: #9CA4B3;
+    --accent: #8EA2FF;  --onacc: #0C0E12;  --accent-soft: #1A2142;
+    --done: #5ECB8A;  --done-soft: #11261A;
+    --warn: #E8AE55;  --warn-soft: #2A2010;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 15px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+main { max-width: 520px; margin: 0 auto; padding: 56px 24px; }
+h1 { font-size: 24px; font-weight: 600; margin: 0 0 8px; }
+.lede { color: var(--ink2); margin: 0 0 28px; }
+.steps { list-style: none; margin: 0; padding: 0; background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius-lg); }
+.step { display: flex; gap: 14px; padding: 14px 16px; border-top: 1px solid var(--rule); }
+.step:first-child { border-top: 0; }
+.mark { flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; background: var(--sunk); color: var(--muted); }
+.done .mark { background: var(--done-soft); color: var(--done); }
+.next .mark { background: var(--accent-soft); color: var(--accent); }
+.ask .mark { background: var(--warn-soft); color: var(--warn); }
+.title { font-weight: 500; }
+.waiting .title { color: var(--muted); }
+.hint { color: var(--ink2); font-size: 14px; margin-top: 2px; }
+button { font: inherit; cursor: pointer; border-radius: var(--radius); border: 1px solid var(--rule); padding: 6px 12px; background: var(--surface); color: var(--ink); }
+button.primary { background: var(--accent); color: var(--onacc); border-color: var(--accent); margin-top: 10px; }
+button.quiet { margin-top: 20px; color: var(--ink2); }
+.note { color: var(--warn); background: var(--warn-soft); padding: 10px 12px; border-radius: var(--radius); font-size: 14px; margin: 16px 0 0; }

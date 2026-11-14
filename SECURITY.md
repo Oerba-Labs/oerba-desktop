@@ -1,0 +1,26 @@
+# The shell's rules
+
+Oerba's pages are not trusted with the computer. The window they run in is built so that a page that went wrong, or a link that
+leads somewhere it should not, finds nothing to reach. The rules are in `src/policy/` and tested without Electron; `src/shell/hardening.ts`
+only wires them in.
+
+- **Settings of every view:** `contextIsolation` on, `sandbox` on, no `nodeIntegration` (also not in workers or subframes), no `webviewTag`
+  (a `<webview>` attach is refused), `webSecurity` on, no insecure content.
+- **No bridge for remote pages.** No preload is given to Oerba's view or to any page but the bundled setup screen. The setup preload exposes
+  three calls (`getState`, `onState`, `act`) through `contextBridge`, does nothing unless it runs in the bundled setup page's top frame, and the main process
+  checks the sender's frame again on every message.
+- **Navigation.** The setup view's main frame may only be the bundled setup page. Oerba's view's main frame may only be `https://app.oerba.dev`
+  (no other port, no credentials in the address). Its subframes may be `https://*.oerba.dev` (Oerba frames workspace doors on those names). Everything else, including
+  redirects, `file:`, `data:` and `javascript:`, is refused. A contents the app did not name may go nowhere.
+- **Links out.** `window.open` never makes a window of ours. An `https:` address (with a host, no credentials) opens in the system browser with
+  `shell.openExternal`; any other scheme is dropped. A plain link out of Oerba's page, if it is `https:`, goes to the browser the same way and the page stays.
+- **Permissions.** Every permission request and check is refused (media, notifications, geolocation, clipboard read, serial, USB, HID, Bluetooth and any kind not
+  known), and so is every device permission. The `select-serial-port`, `select-usb-device`, `select-hid-device` and `select-bluetooth-device` choosers choose nothing.
+  **One exception:** `clipboard-sanitized-write` (copy buttons) for `app.oerba.dev`'s own top frame, since writing text reads nothing.
+  Devices are the app's own screens' to ask for one day, never a workspace's page.
+- **Setup checks only read.** The only program run is Tailscale's `status --json`, by `execFile` with fixed arguments and no shell, and only its backend state is kept.
+  Oerba is asked with a plain `GET /api/who`, no redirects followed, a timeout and a size limit.
+- **The self-test override** of Oerba's address needs both an unpackaged app and an explicit `--selftest` flag, and accepts only a loopback `http` origin.
+- **The app holds no secret** and names no address that is not public.
+
+To report a problem, open a private security advisory on this repository on GitHub.
