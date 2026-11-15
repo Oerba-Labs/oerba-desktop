@@ -4,7 +4,7 @@
 #
 # What it does:
 #   1. refuses a dirty working tree, a version already tagged, or a commit that is not on origin/main;
-#   2. installs exactly what package-lock.json says (npm ci --ignore-scripts, then Electron's own install script) and runs the tests;
+#   2. installs exactly what package-lock.json says (npm ci --ignore-scripts, then Electron's own install script) and runs the tests and the forged-update run (npm run tamper);
 #   3. builds the packaged bundle and packs the app, the dmg and the zip with electron-builder, signing them with the keychain's
 #      "Developer ID Application" identity and notarising and stapling the APP (notarytool, keychain profile "oerba-notary");
 #   4. notarises and staples the DMG as well (xcrun notarytool submit --wait, then xcrun stapler staple). Stapling changes the dmg's
@@ -43,6 +43,7 @@ echo "== install exactly the locked packages, and the tests"
 npm ci --ignore-scripts
 node node_modules/electron/install.js
 npm test
+npm run tamper
 
 echo "== pack, sign and notarise (a keychain dialog may ask you to allow codesign and notarytool)"
 export APPLE_KEYCHAIN_PROFILE=oerba-notary
