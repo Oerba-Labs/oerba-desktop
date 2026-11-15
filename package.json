@@ -11,6 +11,7 @@
     "start": "npm run build && electron .",
     "test": "npm run build && node --test \"dist/test/*.test.js\"",
     "smoke": "npm run build && node scripts/smoke.mjs",
+    "tamper": "npm run build && node scripts/tamper.mjs",
     "build:app": "npm run typecheck && node scripts/build.mjs --app",
     "pack:unsigned": "bash scripts/pack-unsigned.sh",
     "verify:pack": "bash scripts/verify-pack.sh"

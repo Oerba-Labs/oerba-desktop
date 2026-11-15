@@ -32,6 +32,8 @@ if (packaged) {
   const root = JSON.parse(readFileSync("package.json", "utf8"));
   writeFileSync(`${out}/package.json`, JSON.stringify({ name: root.name, productName: "Oerba", version: root.version, description: root.description, main: "main.js", author: "Oerba Labs", license: root.license }, null, 2) + "\n");
 } else {
+  // The forged-update run's own entry (npm run tamper); the packaged bundle above never builds it.
+  await build({ ...common, ...node, entryPoints: ["src/tamper.ts"], outfile: "dist/tamper.js", external: ["electron"] });
   const tests = readdirSync("test").filter((f) => f.endsWith(".test.ts")).map((f) => `test/${f}`);
   if (tests.length) await build({ ...common, entryPoints: tests, outdir: "dist/test", platform: "node", format: "cjs", target: "node22" });
 }
