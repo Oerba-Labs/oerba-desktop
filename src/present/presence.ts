@@ -8,6 +8,9 @@ import { readWho } from "../setup/who";
 import { buildMenu, labelsOf, type Action, type MenuItem } from "./menu";
 import { getJsonObject, type PresentFetch } from "./fetch";
 import { badgeText, decide, freshMemory, Limiter, type Item, type Memory } from "./notify";
+import { approvedOpen, localAddress, NOTIFY_PORTS, WEB_PORTS } from "../policy/browser";
+import { workspaceRoute } from "./routes";
+import { clean } from "./text";
 import { parseNow, type NowModel } from "./now";
 import type { RelayManager } from "../relay/manager";
 
@@ -26,6 +29,8 @@ export interface Deps {
   quit(): void;
   /** The localhost forwards (src/relay/): started from the menu, stopped with their workspace. */
   relay: RelayManager;
+  /** Opens an address in the system browser. Called only with one policy/browser.ts approved. */
+  openLocal(address: string): void;
 }
 
 /** How a notification is shown. The self-test replaces it with a recorder, and nothing else does. */
@@ -51,6 +56,7 @@ export class Presence {
   private running = false;
   private keys = { palette: false, chat: false };
   menu: MenuItem[] = [];
+  dockMenu: MenuItem[] = [];
   private update: string | null = null;
 
   constructor(private readonly d: Deps) {}
@@ -123,12 +129,18 @@ export class Presence {
   private render(): void {
     this.menu = buildMenu({ inOerba: this.inOerba, now: this.now, loginItem: app.getLoginItemSettings().openAtLogin, paletteKey: this.keys.palette, chatKey: this.keys.chat, update: this.update, forwards: this.d.relay.list() });
     this.tray?.setContextMenu(Menu.buildFromTemplate(this.menu.map((m) => this.toNative(m))));
+    // The Dock icon carries the same pieces of the same menu (so a notch cannot hide them): open, workspaces with their forwards, new chat.
+    // The Dock has its own Quit.
+    const dockLabels = new Set(["Open Oerba", "Workspaces", "New chat"]);
+    this.dockMenu = this.menu.filter((m) => dockLabels.has(m.label));
+    app.dock?.setMenu(Menu.buildFromTemplate(this.dockMenu.map((m) => this.toNative(m))));
   }
 
   /** An update is waiting (its version, already checked to be plain), or none. */
   setUpdate(version: string | null): void { this.update = version; this.render(); }
 
   labels(): string[] { return labelsOf(this.menu); }
+  dockLabels(): string[] { return labelsOf(this.dockMenu); }
 
   private toNative(m: MenuItem): MenuItemConstructorOptions {
     if (m.kind === "separator") return { type: "separator" };
@@ -140,6 +152,26 @@ export class Presence {
     return o;
   }
 
+  /** The press that starts a forward: a web port then opens the browser at the number it took, Metro's and Expo's say where it is,
+      and a failure says why in a few words. Only a press that really started it does either; a forward already running opens nothing. */
+  async startForward(owner: string, name: string, port: number): Promise<void> {
+    const r = await this.d.relay.tryStart(owner, name, port);
+    this.render();
+    const route = workspaceRoute(owner, name) ?? "#/";
+    const say = (title: string, body: string): void => {
+      for (const item of this.limiter.admit([{ title, body: clean(body, 120), route }], Date.now())) sink.show(item, () => this.d.openRoute(item.route));
+    };
+    if ("why" in r) { say("Could not open the port", `${name}'s ${port}: ${r.why}`); return; }
+    if (!r.fresh) return;
+    const { local, remote } = r.info;
+    if (WEB_PORTS.includes(remote)) {
+      const url = approvedOpen(localAddress(local), this.d.relay.list());
+      if (url !== null) this.d.openLocal(url);
+    } else if (NOTIFY_PORTS.includes(remote)) {
+      say("Oerba", `localhost:${local}${local === remote ? "" : ` (${remote} was taken)`} → ${name}'s ${remote}`);
+    }
+  }
+
   /** The relay's list changed (a forward started, stopped or ended with its workspace): the menu is drawn again. */
   redraw(): void { this.render(); }
 
@@ -148,7 +180,7 @@ export class Presence {
     else if (a.type === "route") this.d.openRoute(a.route);
     else if (a.type === "palette") this.d.palette();
     else if (a.type === "update") this.d.openUpdate();
-    else if (a.type === "forward") void this.d.relay.start(a.owner, a.name, a.port).then(() => this.render());
+    else if (a.type === "forward") void this.startForward(a.owner, a.name, a.port);
     else if (a.type === "stop") void this.d.relay.stop(a.id).then(() => this.render());
     else if (a.type === "login") app.setLoginItemSettings({ openAtLogin: checked });   // only when the person ticks it
     else this.d.quit();

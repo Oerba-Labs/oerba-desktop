@@ -8,7 +8,7 @@ export interface ForwardInfo { id: string; owner: string; name: string; remote: 
 export interface Started { owner: string; name: string; status: string }
 
 /** The ports the menu offers for a workspace: the ones a dev server usually has (web servers, Metro, Expo). */
-export const COMMON_PORTS: readonly number[] = [3000, 5173, 8000, 8080, 8081, 19000, 19006];
+export const COMMON_PORTS: readonly number[] = [3000, 5173, 8000, 8080, 8081, 19000, 19006];   // web ports first, then Metro's and Expo's (policy/browser.ts)
 const MAX_FORWARDS = 16;
 const STARTED = /^(running|starting|pending)$/;
 
@@ -31,12 +31,19 @@ export class RelayManager {
   /** Starts a forward of a workspace's port, on the same number here where it is free. Returns it, or null when the
       name is not one a forward may dial, one is already running (it is returned), or no number near was free. */
   async start(owner: string, name: string, remote: number): Promise<ForwardInfo | null> {
+    const r = await this.tryStart(owner, name, remote);
+    return "info" in r ? r.info : null;
+  }
+
+  /** As start, saying in a few plain words why it did not; `fresh` is false for a forward that was already running. */
+  async tryStart(owner: string, name: string, remote: number): Promise<{ info: ForwardInfo; fresh: boolean } | { why: string }> {
     const host = upstreamName(remote, name, owner);
-    if (host === null) return null;
+    if (host === null) return { why: "this workspace's name cannot be reached from here" };
     const id = forwardId(owner, name, remote);
     const have = this.running.get(id);
-    if (have) return have.info;
-    if (this.starting.has(id) || this.running.size + this.starting.size >= MAX_FORWARDS) return null;
+    if (have) return { info: have.info, fresh: false };
+    if (this.starting.has(id)) return { why: "it is already starting" };
+    if (this.running.size + this.starting.size >= MAX_FORWARDS) return { why: "too many ports are open" };
     this.starting.add(id);
     try {
       const ws = `${owner.toLowerCase()}/${name.toLowerCase()}`;
@@ -47,11 +54,11 @@ export class RelayManager {
       const fw = new Forward({ name: host, port: remote, upstream: this.upstream, sibling, cookies: jar, limits: this.limits });
       const taken = (n: number): boolean => [...this.running.values()].some((r) => r.info.local === n);
       let local: number;
-      try { local = await fw.listen(remote, taken); } catch { await fw.close(); return null; }
+      try { local = await fw.listen(remote, taken); } catch { await fw.close(); return { why: "no free port was found near it" }; }
       const info: ForwardInfo = { id, owner, name, remote, local };
       this.running.set(id, { info, fw });
       this.changed();
-      return info;
+      return { info, fresh: true };
     } finally {
       this.starting.delete(id);
     }

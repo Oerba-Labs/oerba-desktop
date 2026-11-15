@@ -120,6 +120,33 @@ export async function runSelftest(h: Hooks): Promise<void> {
       check("the forward stopped when its workspace did", after === 0 && relay.list().length === 0, String(after));
     }
 
+    // 4e. The press that starts a forward: a web port opens the browser at the number it took, Metro's says where it is, and a
+    // failure says why; the Dock menu carries the same Workspaces. The browser is a recorder, so nothing real opens.
+    {
+      const opened2: string[] = [];
+      const realOpen2 = external.open;
+      external.open = (u) => { opened2.push(u); };
+      try {
+        const n0 = notes.length;
+        await presence.startForward("alice", "demo", 8000);
+        const web = h.getRelay().list().find((f) => f.remote === 8000);
+        check("a web port's press opened the browser at the number it took, and said nothing", !!web && opened2.length === 1 && opened2[0] === `http://localhost:${web.local}/` && notes.length === n0, `${opened2.join(" ")} ${notes.length - n0}`);
+        await presence.startForward("alice", "demo", 8000);
+        check("a second press of a running forward opened nothing more", opened2.length === 1);
+        await presence.startForward("alice", "demo", 8081);
+        const metro = h.getRelay().list().find((f) => f.remote === 8081);
+        check("Metro's port notified and opened no browser", !!metro && opened2.length === 1 && notes.length === n0 + 1 && notes[notes.length - 1]!.body.startsWith(`localhost:${metro.local}`) && notes[notes.length - 1]!.body.endsWith("→ demo's 8081"), notes.map((n) => n.body).join("|"));
+        await presence.startForward("alice", "a.b", 8081);
+        check("a forward that could not start said why and opened nothing", notes.length === n0 + 2 && notes[notes.length - 1]!.title === "Could not open the port" && opened2.length === 1, notes.map((n) => n.body).join("|"));
+        const dock = presence.dockLabels();
+        check("the Dock menu has Open Oerba, Workspaces with the forwards, and New chat, and no Quit", dock.includes("Open Oerba") && dock.includes("New chat") && dock.some((l) => l.includes("(stop)")) && !dock.includes("Quit Oerba"), dock.join(" | "));
+        await h.getRelay().stopAll();
+        notes.length = 0;
+      } finally {
+        external.open = realOpen2;
+      }
+    }
+
     await fetch(`${h.policy.oerbaOrigin}/__now`, { method: "POST", body: "second" });
     await until("the second read", async () => { await presence.refresh(); return notes.length > 0; });
     check("a new need, a failed deploy and a failed workspace made one notification each, and a good deploy none", notes.length === 3 && notes.map((n) => n.title).sort().join("|") === "A deploy failed|A workspace failed|Waiting on you", notes.map((n) => n.title).join("|"));

@@ -6,6 +6,7 @@ import os from "node:os";
 import { createHash } from "node:crypto";
 import { AGENT, cleanPath, cookieDeletes, cookieUpstream, setCookieDown, fetchSiteAllowed, hostAllowed, loopbackUpstream, neverSent, ONDEMAND, originAllowed, responseHeaders, rewriteLocation, upstreamHeaders, upstreamName, vet } from "../src/relay/rules";
 import { COMMON_PORTS, RelayManager } from "../src/relay/manager";
+import { approvedOpen, localAddress, NOTIFY_PORTS, WEB_PORTS } from "../src/policy/browser";
 import { buildMenu, labelsOf } from "../src/present/menu";
 
 // ---- the rules, pure --------------------------------------------------------------------------------------------------------
@@ -526,5 +527,25 @@ test("a connected but silent upstream is answered 504 whole, and an upgrade the 
   const echoed = await new Promise<string>((resolve) => { socket.once("data", (c) => resolve(c.toString())); socket.write("still here"); });
   assert.equal(echoed, "still here");
   socket.destroy();
+  await m.stopAll();
+});
+
+test("the browser opens only a running forward's own http://localhost:<n>/", () => {
+  const running = [{ local: 8000 }, { local: 3001 }];
+  assert.equal(approvedOpen(localAddress(8000), running), "http://localhost:8000/");
+  assert.equal(approvedOpen(localAddress(3001), running), "http://localhost:3001/");
+  for (const bad of [localAddress(8080), "http://localhost:8000", "http://localhost:8000/x", "http://localhost:8000/?a=1", "http://localhost:8000/#x", "http://127.0.0.1:8000/", "http://evil.example:8000/", "http://localhost.evil.example:8000/", "http://user@localhost:8000/", "https://localhost:8000/", "http://localhost:08000/", "http://localhost:80000/", "javascript:alert(1)", "file:///etc/passwd", "http://localhost:8000/\n", "", null, undefined, 8000, { local: 8000 }]) assert.equal(approvedOpen(bad, running), null, String(bad));
+  assert.equal(approvedOpen(localAddress(8000), []), null, "no forward running");
+  assert.deepEqual([...WEB_PORTS, ...NOTIFY_PORTS].sort(), [3000, 5173, 8000, 8080, 8081, 19000, 19006].sort());
+});
+
+test("a forward that cannot start says why in plain words", async () => {
+  const m = new RelayManager(upstream);
+  const bad = await m.tryStart("alice", "a.b", 8081);
+  assert.ok("why" in bad && bad.why.length < 80);
+  const ok = await m.tryStart("alice", "fine", Math.max(await freePort(), 1024));
+  assert.ok("info" in ok && ok.fresh);
+  const again = await m.tryStart("alice", "fine", ok.info.remote);
+  assert.ok("info" in again && !again.fresh, "a forward already running is not fresh");
   await m.stopAll();
 });

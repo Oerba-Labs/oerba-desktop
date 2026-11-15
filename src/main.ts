@@ -21,7 +21,7 @@ import { UpdateWindow } from "./update/window";
 import type { PresentFetch } from "./present/fetch";
 import { RelayManager } from "./relay/manager";
 import { loopbackUpstream, ONDEMAND } from "./relay/rules";
-import { installHardening, setRole } from "./shell/hardening";
+import { external, installHardening, setRole } from "./shell/hardening";
 
 // Before anything loads: a packaged app opened with a command-line switch (a debugger port, no sandbox, no web security)
 // is being asked to run loosened, and does not start. An unpackaged run is the developer's own and is unaffected.
@@ -206,7 +206,7 @@ ipcMain.handle("setup:act", async (event, action: unknown) => {
 app.whenReady().then(() => {
   serveBundled(__dirname);
   installHardening(policy);
-  presence = new Presence({ oerbaOrigin: config.oerbaOrigin, fetchFn: presentFetch, intervalMs: config.presentMs, windowShown: () => !!win && win.isVisible() && !win.isMinimized(), show: showWindow, openRoute, palette: openPalette, openUpdate: () => updateWindow?.show(), onIn: () => updater.start(), quit: () => app.quit(), relay });
+  presence = new Presence({ oerbaOrigin: config.oerbaOrigin, fetchFn: presentFetch, intervalMs: config.presentMs, windowShown: () => !!win && win.isVisible() && !win.isMinimized(), show: showWindow, openRoute, palette: openPalette, openUpdate: () => updateWindow?.show(), onIn: () => updater.start(), quit: () => app.quit(), relay, openLocal: (u) => external.open(u) });
   presence.start();
   updateWindow = new UpdateWindow(policy, SAFE, updater, config.selftest);
   win = createWindow();
