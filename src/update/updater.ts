@@ -14,16 +14,22 @@ export interface Engine {
   on(event: "update-downloaded" | "error", cb: () => void): unknown;
 }
 
-/** electron-updater's own, set to ask: nothing downloads and nothing installs by itself. No feed is set here. */
+/** The settings that make electron-updater ask: nothing downloads and nothing installs by itself. No feed is set here. One
+    function, so the app and the test of a forged update (src/tamper.ts) cannot differ in them. */
+export function askOnly<T extends { autoDownload: boolean; autoInstallOnAppQuit: boolean; autoRunAppAfterInstall: boolean; allowDowngrade: boolean; allowPrerelease: boolean; logger: unknown }>(u: T): T {
+  u.autoDownload = false;
+  u.autoInstallOnAppQuit = false;
+  u.autoRunAppAfterInstall = true;
+  u.allowDowngrade = false;
+  u.allowPrerelease = false;
+  u.logger = null;   // a failed check is no news: the next one asks again
+  return u;
+}
+
+/** electron-updater's own, set to ask. */
 export async function realEngine(): Promise<Engine> {
   const { autoUpdater } = await import("electron-updater");
-  autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = false;
-  autoUpdater.autoRunAppAfterInstall = true;
-  autoUpdater.allowDowngrade = false;
-  autoUpdater.allowPrerelease = false;
-  autoUpdater.logger = null;   // a failed check is no news: the next one asks again
-  return autoUpdater as unknown as Engine;
+  return askOnly(autoUpdater) as unknown as Engine;
 }
 
 export class Updater {
