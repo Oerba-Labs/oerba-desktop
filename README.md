@@ -45,6 +45,22 @@ REACT_NATIVE_PACKAGER_HOSTNAME=localhost npx expo start        # or: EXPO_PACKAG
 
 If the app still fetches its bundle from the workspace's long name, the forward is not the problem: that name answers from this Mac too (tailnet), but without the relay's checks. Use the forward's number: if it fell to 8082, use `http://localhost:8082` and `EXPO_PACKAGER_PROXY_URL` to match.
 
+**Open in iOS Simulator (an Expo app).** On a workspace's Metro ports (8081 and 19000) the menu bar item and the Dock menu also offer **Open 8081 in iOS Simulator**. One press does the following, in order, and stops at the first thing that is missing:
+
+1. Starts the forward of that port if it is not running, and uses the number it took.
+2. Checks that Xcode is installed (read only). If not, it says so: install Xcode from the App Store, open it once and let it install the iOS platform. Oerba installs nothing.
+3. Uses an iPhone simulator that is already booted, or boots the first iPhone of the newest iOS runtime, and shows Simulator.
+4. Checks that Expo Go is in that simulator. If not, it says so: Expo's page for Expo Go offers a build for the iOS Simulator. Oerba installs nothing into it.
+5. Opens `exp://127.0.0.1:<the number it took>` in Expo Go and says what it did.
+
+Start Expo in the workspace with the forward's address, or the phone is told the workspace's own name for its bundle (Expo's CLI builds the bundle address from this variable where it is set, otherwise from the request's `Forwarded` or `X-Forwarded-Host` header, otherwise from its own host and port):
+
+```sh
+EXPO_PACKAGER_PROXY_URL=http://127.0.0.1:8081 npx expo start     # the number the menu shows, if it was not 8081
+```
+
+Booting a simulator is the only thing this changes on the Mac: it never erases, shuts down, creates or deletes one. Only the app's own menu starts it; no page can.
+
 **A web dev server** (Vite, Next, webpack) on 3000, 5173 or 8080: forward it and open `http://localhost:5173`. A page on one forward may call another forward of the same workspace (a frontend on `localhost:5173` and an API on `localhost:8000`, both started from the menu); a page from a port the app is not forwarding, or from another site, may not (see `SECURITY.md`). A server that checks the `Host` it sees (Vite's `server.allowedHosts`) sees the workspace's name, not `localhost`: allow it there. Your app's own cookies pass both ways once the workspace has set them (a `Domain` on one is removed so it lands on localhost); other programs' cookies on localhost, and On-Demand's own, are never sent on. A link to a forward from another website shows the relay's own "Opened from another site" page first, with a Continue link. **An app's own `Authorization: Bearer` cannot pass through On-Demand's proxy**, by the relay or by the browser's door at the workspace's name alike, because On-Demand reads a Bearer as its own credential: while a dev app is served this way it should use a cookie or another header. The relay drops `Authorization`.
 
 ## What it does not do
@@ -105,6 +121,7 @@ A packaged app asks GitHub Releases for `latest-mac.yml` once the person is in, 
 - `src/policy/`: the shell's rules as small pure modules (navigation, permissions, external links), tested without Electron.
 - `src/setup/`: what the setup screen checks (`probes.ts`), how it reads `/api/who` (`who.ts`) and how the steps follow from it (`state.ts`).
 - `src/present/`: the menu bar, notifications and badge: reading `/api/now` (`now.ts`), what is worth a notification (`notify.ts`), the menu as data (`menu.ts`), routes (`routes.ts`), plain text (`text.ts`), and `presence.ts` wiring them to Electron.
+- `src/sim/`: opening a Metro port in the iOS Simulator: the decisions as pure functions (`decide.ts`) and the one-press-at-a-time runner of Xcode's tools (`run.ts`).
 - `src/relay/`: the localhost forwards: the rules as pure functions (`rules.ts`), one forward's listeners (`forward.ts`) and the running ones (`manager.ts`).
 - `src/update/`: when to check, the update state, release notes as plain text, and the window.
 - `src/shell/hardening.ts`: wires the policies to Electron. `src/main.ts`: the window. `src/preload-setup.ts`: the setup page's three calls.
