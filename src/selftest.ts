@@ -187,7 +187,7 @@ export async function runSelftest(h: Hooks): Promise<void> {
         check("a second press while one runs ran nothing", calls.filter((c) => c.endsWith("list devices --json")).length === 1, calls.join(" | "));
         (gate as (() => void) | null)?.();
         await first;
-        check("a booted device was used and nothing booted", !!f && calls.includes(`/usr/bin/xcrun simctl get_app_container ${SIM} host.exp.Exponent`) && !calls.some((c) => c.includes("simctl boot")), calls.join(" | "));
+        check("a booted device was used and nothing booted, and Device Hub was asked by bundle id", !!f && calls.includes(`/usr/bin/open -b com.apple.dt.Devices devices://device/open?id=${SIM}`) && !calls.some((c) => c.includes("iphonesimulator")) && calls.includes(`/usr/bin/xcrun simctl get_app_container ${SIM} host.exp.Exponent`) && !calls.some((c) => c.includes("simctl boot")), calls.join(" | "));
         check("Expo Go missing: the address was not opened", !!f && !calls.some((c) => c.includes("openurl")), calls.join(" | "));   // what is said is the unit tests': the limiter here has no room left
         const c0 = calls.length;
         await presence.openInSimulator("alice", "demo", 8000);

@@ -49,7 +49,7 @@ If the app still fetches its bundle from the workspace's long name, the forward 
 
 1. Starts the forward of that port if it is not running, and uses the number it took.
 2. Checks that Xcode is installed (read only). If not, it says so: install Xcode from the App Store, open it once and let it install the iOS platform. Oerba installs nothing.
-3. Uses an iPhone simulator that is already booted, or boots the first iPhone of the newest iOS runtime, and shows Simulator.
+3. Uses an iPhone simulator that is already booted, or boots the first iPhone of the newest iOS runtime, and shows it: in Device Hub on Xcode 27 (which replaced Simulator), or Simulator on Xcode 26 and earlier, each found by bundle id. If neither opens, the message says to open it yourself.
 4. Checks that Expo Go is in that simulator. If not, it says so: Expo's page for Expo Go offers a build for the iOS Simulator. Oerba installs nothing into it.
 5. Opens `exp://127.0.0.1:<the number it took>` in Expo Go and says what it did.
 

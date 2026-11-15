@@ -4,7 +4,7 @@
    Booting a simulator is the only thing it changes on the Mac: it never erases, shuts down, creates or deletes one, and installs no app. */
 
 import { execFile } from "node:child_process";
-import { EXPO_GO, expoUrl, isUdid, parseDevices, pickDevice, type Outcome } from "./decide";
+import { DEVICE_HUB_ID, deviceHubUrl, EXPO_GO, expoUrl, isUdid, parseDevices, pickDevice, SIMULATOR_ID, type Outcome } from "./decide";
 
 export interface Ran { code: number | null; stdout: string }
 /** Runs one program. The self-test and the unit tests put a stand-in here; the app never does. */
@@ -49,8 +49,11 @@ export async function openInSimulator(port: number, run: Runner): Promise<Outcom
     // Boots asynchronously: wait until it is up (this reads, it changes nothing), or the address would meet a device not ready for it.
     if ((await run(XCRUN, ["simctl", "bootstatus", udid], BOOT)).code !== 0) return { kind: "boot-failed" };
   }
-  // Shows its window. A failure (an Xcode with no Simulator.app) does not stop the address being opened, and is said at the end.
-  const shown = (await run(OPEN, ["-a", "Simulator"], QUICK)).code === 0;
+  // Shows the device: in Device Hub (Xcode 27) by its bundle id and deep link, else in Simulator (Xcode 26 and earlier) by its bundle id.
+  // If neither opens, that does not stop the address being opened, and is said at the end.
+  const hub = deviceHubUrl(udid);
+  const shown = (hub !== null && (await run(OPEN, ["-b", DEVICE_HUB_ID, hub], QUICK)).code === 0) ||
+    (await run(OPEN, ["-b", SIMULATOR_ID, "--args", "-CurrentDeviceUDID", udid], QUICK)).code === 0;
 
   if ((await run(XCRUN, ["simctl", "get_app_container", udid, EXPO_GO], QUICK)).code !== 0) return { kind: "no-expo-go", name };
   if ((await run(XCRUN, ["simctl", "openurl", udid, url], QUICK)).code !== 0) return { kind: "open-failed", name };

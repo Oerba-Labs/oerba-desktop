@@ -20,6 +20,14 @@ export const isPort = (v: unknown): v is number => typeof v === "number" && Numb
 /** The address Expo Go is asked to open, built from the port alone; null for anything that is not a port. */
 export const expoUrl = (port: unknown): string | null => (isPort(port) ? `exp://127.0.0.1:${port}` : null);
 
+/** Xcode 27's Device Hub (it replaced Simulator.app) and Simulator on Xcode 26 and earlier, each found by bundle id: never by name,
+    and never by the address's scheme alone, since any app can register `devices:`. */
+export const DEVICE_HUB_ID = "com.apple.dt.Devices";
+export const SIMULATOR_ID = "com.apple.iphonesimulator";
+
+/** The deep link that shows a device in Device Hub, built from a UUID-shaped UDID alone; null for anything else. */
+export const deviceHubUrl = (udid: unknown): string | null => (isUdid(udid) ? `devices://device/open?id=${udid}` : null);
+
 /** What the person is told to start Expo with, so the bundle's address in its manifest is the forward's and not the workspace's name. */
 export const packagerProxy = (port: number): string => `EXPO_PACKAGER_PROXY_URL=http://127.0.0.1:${port}`;
 
@@ -90,7 +98,7 @@ export interface Say { title: string; body: string }
 /** What the person is told, from what was found. A name is a simulator's own ("iPhone 18 Pro") and is cut by the caller's `clean`. */
 export function describe(o: Outcome): Say {
   switch (o.kind) {
-    case "opened": return { title: "Oerba", body: `${o.booted ? "Booted" : "Used"} ${o.name} and opened exp://127.0.0.1:${o.port} in Expo Go${o.shown ? "" : ". Simulator's window could not be shown: open Simulator yourself"}` };
+    case "opened": return { title: "Oerba", body: `${o.booted ? "Booted" : "Used"} ${o.name} and opened exp://127.0.0.1:${o.port} in Expo Go${o.shown ? "" : ". the window could not be shown: open Device Hub (Simulator on Xcode 26 and earlier) yourself"}` };
     case "no-xcode": return { title: "Xcode is needed for the Simulator", body: "Install Xcode from the App Store, open it once and let it install the iOS platform. Oerba installs nothing itself." };
     case "no-iphone": return { title: "No iPhone simulator", body: "Xcode has no iPhone simulator yet: open Xcode, then Settings, Components, and install the iOS platform." };
     case "boot-failed": return { title: "The Simulator did not start", body: "An iPhone simulator would not boot. Open Simulator yourself and try again." };

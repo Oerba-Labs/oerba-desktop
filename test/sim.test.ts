@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { describe, EXPO_GO, expoHint, expoUrl, isPort, isUdid, iosVersion, METRO_PORTS, parseDevices, pickDevice } from "../src/sim/decide";
+import { describe, deviceHubUrl, EXPO_GO, expoHint, expoUrl, isPort, isUdid, iosVersion, METRO_PORTS, parseDevices, pickDevice } from "../src/sim/decide";
 import { OnePress, openInSimulator, type Ran, type Runner } from "../src/sim/run";
 import { buildMenu, labelsOf } from "../src/present/menu";
 import { parseNow } from "../src/present/now";
@@ -108,7 +108,7 @@ test("what the person is told for each outcome", () => {
 
 // ---- the sequence, against a stand-in runner that records what it was asked and boots nothing ---------------------------------
 
-interface Script { xcodeSelect?: number; find?: number; list?: unknown; listCode?: number; boot?: number; bootstatus?: number; container?: number; open?: number; openurl?: number }
+interface Script { xcodeSelect?: number; find?: number; list?: unknown; listCode?: number; boot?: number; bootstatus?: number; container?: number; open?: number; hub?: number; openurl?: number }
 function standIn(s: Script): { run: Runner; calls: string[] } {
   const calls: string[] = [];
   const run: Runner = async (file, args, timeoutMs) => {
@@ -118,7 +118,7 @@ function standIn(s: Script): { run: Runner; calls: string[] } {
     calls.push(line);
     const r = (code: number, stdout = ""): Ran => ({ code, stdout });
     if (file === "/usr/bin/xcode-select") return r(s.xcodeSelect ?? 0, "/Applications/Xcode.app/Contents/Developer\n");
-    if (file === "/usr/bin/open") return r(s.open ?? 0);
+    if (file === "/usr/bin/open") return r(args.includes("com.apple.dt.Devices") ? (s.hub ?? 0) : (s.open ?? 0));
     const a = args.join(" ");
     if (a === "--find simctl") return r(s.find ?? 0);
     if (a === "simctl list devices --json") return r(s.listCode ?? 0, text(s.list ?? LIST()));
@@ -141,7 +141,7 @@ test("the whole sequence: boots the first iPhone, shows Simulator, finds Expo Go
     "/usr/bin/xcrun simctl list devices --json",
     `/usr/bin/xcrun simctl boot ${FIRST}`,
     `/usr/bin/xcrun simctl bootstatus ${FIRST}`,
-    "/usr/bin/open -a Simulator",
+    `/usr/bin/open -b com.apple.dt.Devices devices://device/open?id=${FIRST}`,
     `/usr/bin/xcrun simctl get_app_container ${FIRST} ${EXPO_GO}`,
     `/usr/bin/xcrun simctl openurl ${FIRST} exp://127.0.0.1:8082`,
   ]);
@@ -181,8 +181,28 @@ test("no iPhone, a boot that fails, an address that is refused, a list that cann
   assert.deepEqual(await openInSimulator(8081, standIn({ listCode: 1 }).run), { kind: "failed" });
 });
 
-test("Simulator's window that cannot be shown does not stop the address being opened, and is said", async () => {
-  const { run, calls } = standIn({ open: 1 });
+test("Device Hub's deep link is built from a UDID alone", () => {
+  assert.equal(deviceHubUrl(FIRST), `devices://device/open?id=${FIRST}`);
+  for (const bad of ["", "booted", `${FIRST}&x=1`, `${FIRST}\n`, "../x", null, 5]) assert.equal(deviceHubUrl(bad), null, String(bad));
+});
+
+test("Device Hub failing falls back to Simulator by bundle id, in that order, and the address is still opened", async () => {
+  const { run, calls } = standIn({ hub: 1 });
+  const o = await openInSimulator(8081, run);
+  assert.ok(o.kind === "opened" && o.shown);
+  const opens = calls.filter((c) => c.startsWith("/usr/bin/open "));
+  assert.deepEqual(opens, [`/usr/bin/open -b com.apple.dt.Devices devices://device/open?id=${FIRST}`, `/usr/bin/open -b com.apple.iphonesimulator --args -CurrentDeviceUDID ${FIRST}`]);
+  assert.ok(calls.some((c) => c.includes("openurl")));
+});
+
+test("Device Hub opening means Simulator is not tried", async () => {
+  const { run, calls } = standIn({});
+  await openInSimulator(8081, run);
+  assert.equal(calls.filter((c) => c.startsWith("/usr/bin/open ")).length, 1);
+});
+
+test("Neither window can be shown: the address is still opened, and it is said", async () => {
+  const { run, calls } = standIn({ open: 1, hub: 1 });
   assert.deepEqual(await openInSimulator(8081, run), { kind: "opened", name: "iPhone 18 Pro", booted: true, port: 8081, shown: false });
   assert.ok(calls.some((c) => c.includes("openurl")));
 });
