@@ -28,7 +28,7 @@ const CX = 102.3, CY = 38, H = 78;   // the silhouette's centre and height
 // App icon: Apple's grid, a 824 square centred in 1024, radius 185; the mark about 60% of the body wide (the taller side).
 const scale = (824 * 0.6) / H;
 const iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-<rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="#3451D1"/>
+<rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="#E0672A"/>
 <g fill="#FFFFFF" transform="translate(512 512) scale(${scale.toFixed(4)}) translate(${-CX} ${-CY})">
 ${SHAPES}
 </g>
