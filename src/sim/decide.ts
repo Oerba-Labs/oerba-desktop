@@ -77,7 +77,7 @@ export function pickDevice(devices: readonly Device[]): Pick {
 
 /** How one press ended. */
 export type Outcome =
-  | { kind: "opened"; name: string; booted: boolean; port: number }
+  | { kind: "opened"; name: string; booted: boolean; port: number; shown: boolean }
   | { kind: "no-xcode" }
   | { kind: "no-iphone" }
   | { kind: "boot-failed" }
@@ -90,7 +90,7 @@ export interface Say { title: string; body: string }
 /** What the person is told, from what was found. A name is a simulator's own ("iPhone 18 Pro") and is cut by the caller's `clean`. */
 export function describe(o: Outcome): Say {
   switch (o.kind) {
-    case "opened": return { title: "Oerba", body: `${o.booted ? "Booted" : "Used"} ${o.name} and opened exp://127.0.0.1:${o.port} in Expo Go` };
+    case "opened": return { title: "Oerba", body: `${o.booted ? "Booted" : "Used"} ${o.name} and opened exp://127.0.0.1:${o.port} in Expo Go${o.shown ? "" : ". Simulator's window could not be shown: open Simulator yourself"}` };
     case "no-xcode": return { title: "Xcode is needed for the Simulator", body: "Install Xcode from the App Store, open it once and let it install the iOS platform. Oerba installs nothing itself." };
     case "no-iphone": return { title: "No iPhone simulator", body: "Xcode has no iPhone simulator yet: open Xcode, then Settings, Components, and install the iOS platform." };
     case "boot-failed": return { title: "The Simulator did not start", body: "An iPhone simulator would not boot. Open Simulator yourself and try again." };

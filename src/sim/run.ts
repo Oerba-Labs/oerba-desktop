@@ -49,11 +49,12 @@ export async function openInSimulator(port: number, run: Runner): Promise<Outcom
     // Boots asynchronously: wait until it is up (this reads, it changes nothing), or the address would meet a device not ready for it.
     if ((await run(XCRUN, ["simctl", "bootstatus", udid], BOOT)).code !== 0) return { kind: "boot-failed" };
   }
-  await run(OPEN, ["-a", "Simulator"], QUICK);   // shows its window; a failure to show it does not stop the address being opened
+  // Shows its window. A failure (an Xcode with no Simulator.app) does not stop the address being opened, and is said at the end.
+  const shown = (await run(OPEN, ["-a", "Simulator"], QUICK)).code === 0;
 
   if ((await run(XCRUN, ["simctl", "get_app_container", udid, EXPO_GO], QUICK)).code !== 0) return { kind: "no-expo-go", name };
   if ((await run(XCRUN, ["simctl", "openurl", udid, url], QUICK)).code !== 0) return { kind: "open-failed", name };
-  return { kind: "opened", name, booted: pick.kind === "boot", port };
+  return { kind: "opened", name, booted: pick.kind === "boot", port, shown };
 }
 
 /** One press at a time: a press while another runs is ignored (false). */
