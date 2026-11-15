@@ -4,12 +4,14 @@ import type { NowModel } from "./now";
 import { CHAT, HOME, workspaceRoute } from "./routes";
 import { COMMON_PORTS, type ForwardInfo } from "../relay/manager";
 import { upstreamName } from "../relay/rules";
+import { METRO_PORTS } from "../sim/decide";
 
 export type Action =
   | { type: "open" }
   | { type: "route"; route: string }
   | { type: "palette" }
   | { type: "forward"; owner: string; name: string; port: number }
+  | { type: "simulator"; owner: string; name: string; port: number }
   | { type: "stop"; id: string }
   | { type: "login"; checked: boolean }
   | { type: "update" }
@@ -60,6 +62,10 @@ export function buildMenu(i: MenuInput): MenuItem[] {
       if (mine.length > 0 || offer.length > 0) sub.push(SEP);
       for (const f of mine) sub.push({ label: `localhost:${f.local} → ${f.remote} (stop)`, action: { type: "stop", id: f.id } });
       for (const p of offer) sub.push({ label: `Open on localhost:${p}`, action: { type: "forward", owner: w.owner, name: w.name, port: p } });
+      // Metro's ports also open in the iOS Simulator on this Mac (src/sim/): it starts the forward itself if it is not running.
+      for (const p of METRO_PORTS) {
+        if (upstreamName(p, w.name, w.owner) !== null) sub.push({ label: `Open ${p} in iOS Simulator`, action: { type: "simulator", owner: w.owner, name: w.name, port: p } });
+      }
       rows.push({ label: mine.length > 0 ? `${w.name} (localhost:${mine.map((f) => f.local).join(", ")})` : w.name, submenu: sub });
     }
     items.push(rows.length > 0 ? { label: "Workspaces", submenu: rows } : { label: "Workspaces", enabled: false });

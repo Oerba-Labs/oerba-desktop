@@ -25,7 +25,7 @@ assert_fuses() {
 assert_no_selftest() {
   local app="$1" work="$2" bad=0 needle f
   npx --no-install @electron/asar extract "$app/Contents/Resources/app.asar" "$work/asar" >/dev/null 2>&1
-  for needle in "--selftest" "selftest.ts" "oerba-origin" "other-origin" "present-ms" "relay-upstream" "smoke:" "example.invalid" "stand-in" "__open" "runSelftest" "oerba-desktop-tamper" "OERBA_TAMPER" "tamper-test"; do
+  for needle in "--selftest" "selftest.ts" "oerba-origin" "other-origin" "present-ms" "relay-upstream" "smoke:" "example.invalid" "stand-in" "__open" "runSelftest" "oerba-desktop-tamper" "OERBA_TAMPER" "tamper-test" "5E5E5E5E-0000-4000-8000-5E5E5E5E5E5E"; do
     if grep -rqF -- "$needle" "$work/asar/main.js" "$work/asar/setup" "$work/asar/update" "$work/asar/preload-setup.js" "$work/asar/preload-update.js"; then
       echo "FOUND in the app code: $needle" >&2; bad=1
     else echo "absent: $needle"; fi

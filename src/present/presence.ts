@@ -13,6 +13,8 @@ import { workspaceRoute } from "./routes";
 import { clean } from "./text";
 import { parseNow, type NowModel } from "./now";
 import type { RelayManager } from "../relay/manager";
+import { describe, expoHint, METRO_PORTS } from "../sim/decide";
+import { OnePress, openInSimulator, simulator } from "../sim/run";
 
 export interface Deps {
   oerbaOrigin: string;
@@ -58,6 +60,8 @@ export class Presence {
   menu: MenuItem[] = [];
   dockMenu: MenuItem[] = [];
   private update: string | null = null;
+  private readonly simPress = new OnePress();
+  private hinted = false;
 
   constructor(private readonly d: Deps) {}
 
@@ -172,6 +176,29 @@ export class Presence {
     }
   }
 
+  /** The press "Open in iOS Simulator" on a Metro port: starts the forward if it is not running, then runs src/sim/'s sequence at the
+      number the forward took, and says in one notification what it did. A press while one is running is ignored. Only the menu calls it. */
+  async openInSimulator(owner: string, name: string, port: number): Promise<void> {
+    if (!METRO_PORTS.includes(port)) return;
+    const route = workspaceRoute(owner, name) ?? "#/";
+    const say = (title: string, body: string): void => {
+      for (const item of this.limiter.admit([{ title: clean(title, 60), body: clean(body, 200), route }], Date.now())) sink.show(item, () => this.d.openRoute(item.route));
+    };
+    await this.simPress.run(async () => {
+      const f = await this.d.relay.tryStart(owner, name, port);
+      this.render();
+      if ("why" in f) { say("Could not open the port", `${name}'s ${port}: ${f.why}`); return; }
+      const outcome = await openInSimulator(f.info.local, simulator.run);
+      const words = describe(outcome);
+      say(words.title, words.body);
+      if (outcome.kind === "opened" && !this.hinted) {
+        this.hinted = true;
+        const h = expoHint(f.info.local);
+        say(h.title, h.body);
+      }
+    });
+  }
+
   /** The relay's list changed (a forward started, stopped or ended with its workspace): the menu is drawn again. */
   redraw(): void { this.render(); }
 
@@ -181,6 +208,7 @@ export class Presence {
     else if (a.type === "palette") this.d.palette();
     else if (a.type === "update") this.d.openUpdate();
     else if (a.type === "forward") void this.startForward(a.owner, a.name, a.port);
+    else if (a.type === "simulator") void this.openInSimulator(a.owner, a.name, a.port);
     else if (a.type === "stop") void this.d.relay.stop(a.id).then(() => this.render());
     else if (a.type === "login") app.setLoginItemSettings({ openAtLogin: checked });   // only when the person ticks it
     else this.d.quit();

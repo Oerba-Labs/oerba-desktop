@@ -12,6 +12,7 @@ import type { UpdateWindow } from "./update/window";
 import { sink } from "./present/presence";
 import type { Item } from "./present/notify";
 import { external, refusals, setRole } from "./shell/hardening";
+import { simulator, type Runner } from "./sim/run";
 
 export interface Hooks {
   config: Config;
@@ -140,6 +141,9 @@ export async function runSelftest(h: Hooks): Promise<void> {
         check("a forward that could not start said why and opened nothing", notes.length === n0 + 2 && notes[notes.length - 1]!.title === "Could not open the port" && opened2.length === 1, notes.map((n) => n.body).join("|"));
         const dock = presence.dockLabels();
         check("the Dock menu has Open Oerba, Workspaces with the forwards, and New chat, and no Quit", dock.includes("Open Oerba") && dock.includes("New chat") && dock.some((l) => l.includes("(stop)")) && !dock.includes("Quit Oerba"), dock.join(" | "));
+        const labels2 = presence.labels();
+        check("the menu offers the Simulator on Metro's ports and on no web port", labels2.includes("    Open 8081 in iOS Simulator") && labels2.includes("    Open 19000 in iOS Simulator") && !labels2.some((l) => /Open (3000|5173|8000|8080|19006) in iOS Simulator/.test(l)), labels2.join(" | "));
+        check("the Dock menu offers it too", presence.dockLabels().includes("    Open 8081 in iOS Simulator"));
         await h.getRelay().stopAll();
         notes.length = 0;
       } finally {
@@ -154,6 +158,46 @@ export async function runSelftest(h: Hooks): Promise<void> {
     check("the badge follows", app.dock?.getBadge() === "2", String(app.dock?.getBadge()));
     await presence.refresh();
     check("reading the same answer again made none more", notes.length === 3);
+
+    // 4f. "Open in iOS Simulator": offered on Metro's ports and on no web port; a press starts the forward, runs the sequence at the
+    // number the forward took and says what it did once; a second press while one runs is ignored. The runner is a recorder that
+    // answers like an Xcode with one booted iPhone and no Expo Go, so nothing on this Mac is touched.
+    {
+      const calls: string[] = [];
+      let gate: (() => void) | null = null;
+      const realRun = simulator.run;
+      const SIM = "5E5E5E5E-0000-4000-8000-5E5E5E5E5E5E";
+      const fake: Runner = async (file, args) => {
+        calls.push([file, ...args].join(" "));
+        const a = args.join(" ");
+        if (a === "simctl list devices --json") {
+          if (gate === null) await new Promise<void>((r) => { gate = r; });
+          return { code: 0, stdout: JSON.stringify({ devices: { "com.apple.CoreSimulator.SimRuntime.iOS-26-5": [{ udid: SIM, isAvailable: true, deviceTypeIdentifier: "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro", state: "Booted", name: "iPhone 17 Pro" }] } }) };
+        }
+        return { code: a.startsWith("simctl get_app_container") ? 1 : 0, stdout: "" };
+      };
+      simulator.run = fake;
+      try {
+        const first = presence.openInSimulator("alice", "demo", 8081);
+        await until("the sequence reached the device list", () => calls.length >= 3);
+        const second = presence.openInSimulator("alice", "demo", 8081);   // while the first waits: ignored
+        await second;
+        const f = h.getRelay().list().find((x) => x.remote === 8081);
+        check("the press started the forward", !!f);
+        check("a second press while one runs ran nothing", calls.filter((c) => c.endsWith("list devices --json")).length === 1, calls.join(" | "));
+        (gate as (() => void) | null)?.();
+        await first;
+        check("a booted device was used and nothing booted", !!f && calls.includes(`/usr/bin/xcrun simctl get_app_container ${SIM} host.exp.Exponent`) && !calls.some((c) => c.includes("simctl boot")), calls.join(" | "));
+        check("Expo Go missing: the address was not opened", !!f && !calls.some((c) => c.includes("openurl")), calls.join(" | "));   // what is said is the unit tests': the limiter here has no room left
+        const c0 = calls.length;
+        await presence.openInSimulator("alice", "demo", 8000);
+        check("a press for a web port ran nothing and started no forward", calls.length === c0 && !h.getRelay().list().some((x) => x.remote === 8000));
+        await h.getRelay().stopAll();
+        notes.length = 0;
+      } finally {
+        simulator.run = realRun;
+      }
+    }
 
     // 4c. An update, offered by a stand-in for electron-updater: the menu item, the window, Download and Restart.
     const calls: string[] = [];
