@@ -6,14 +6,25 @@
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { basename, dirname, join } from "node:path";
 import { app } from "electron";
 import { autoUpdater } from "electron-updater";
 import { askOnly, Updater, type Engine } from "./update/updater";
 
-const scratch = process.env["OERBA_TAMPER_DIR"] ?? "";
+/** The scratch folder is removed whole at the end, so it is taken only as scripts/tamper.mjs makes it: an empty folder named
+    oerba-tamper-XXXXXX directly in the system's temporary folder, links resolved. Any other value (the home folder, set by hand) is
+    refused before anything is written or removed. */
+function scratchFolder(given: string): string | null {
+  try {
+    const real = realpathSync(given);
+    if (dirname(real) !== realpathSync(tmpdir()) || !/^oerba-tamper-[A-Za-z0-9]{6}$/.test(basename(real))) return null;
+    if (!statSync(real).isDirectory() || readdirSync(real).length !== 0) return null;
+    return real;
+  } catch { return null; }
+}
+const scratch = scratchFolder(process.env["OERBA_TAMPER_DIR"] ?? "") ?? "";
 const cacheName = process.env["OERBA_TAMPER_CACHE"] ?? "";
 if (!scratch || !/^oerba-desktop-tamper-test-[0-9]+$/.test(cacheName)) { console.log("FAIL run it by npm run tamper"); app.exit(2); throw new Error("not started by scripts/tamper.mjs"); }
 // Before ready: nothing of this run is written to the installed app's folders.

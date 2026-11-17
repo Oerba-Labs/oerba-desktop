@@ -21,7 +21,8 @@ export const isPort = (v: unknown): v is number => typeof v === "number" && Numb
 export const expoUrl = (port: unknown): string | null => (isPort(port) ? `exp://127.0.0.1:${port}` : null);
 
 /** Xcode 27's Device Hub (it replaced Simulator.app) and Simulator on Xcode 26 and earlier, each found by bundle id: never by name,
-    and never by the address's scheme alone, since any app can register `devices:`. */
+    and never by the address's scheme alone, since any app can register `devices:`. A bundle id is not proof that the app is Apple's
+    (a copy claiming it could be placed by a program running as the person); what it is handed is a UUID. */
 export const DEVICE_HUB_ID = "com.apple.dt.Devices";
 export const SIMULATOR_ID = "com.apple.iphonesimulator";
 
