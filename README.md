@@ -37,13 +37,9 @@ In the menu bar item, each of your started workspaces has a submenu: **Open in O
 
 You need to be on the tailnet as for Oerba itself; the relay holds no credential and asks On-Demand as you.
 
-**React Native and Expo.** Run Metro in the workspace (`npx expo start` or `npx react-native start`, port 8081 or 19000) and start its forward from the menu. Then, in the iOS Simulator on this Mac, open the development build and give it `localhost:8081` (Expo's "Enter URL manually", or `exp://localhost:8081`). Metro builds the bundle URLs it hands out from the address it was asked on, which On-Demand's proxy has changed to the workspace's own name, so start it with the address you want the app to use:
+**React Native and Expo.** Run Metro in the workspace (`npx expo start` or `npx react-native start`, port 8081 or 19000) and start its forward from the menu. Then, in the iOS Simulator on this Mac, open the development build and give it `localhost:8081` (Expo's "Enter URL manually", or `exp://localhost:8081`). Expo hands the app its bundle's address in a manifest, built from the request it answered. The relay sends a `Forwarded` header of its own naming the address the app asked, `proto=http;host="localhost:8081"`, and Expo's CLI reads it first from SDK 58 (August 2026), so nothing need be set in the workspace. An older Expo reads only the `X-Forwarded-Proto: https` and the workspace's own name that On-Demand's front door adds, so its app is sent to an `https://` address the forward does not answer; `EXPO_PACKAGER_PROXY_URL` changes the host it names but not the scheme. Use Expo SDK 58 or later.
 
-```sh
-REACT_NATIVE_PACKAGER_HOSTNAME=localhost npx expo start        # or: EXPO_PACKAGER_PROXY_URL=http://localhost:8081 npx expo start
-```
-
-If the app still fetches its bundle from the workspace's long name, the forward is not the problem: that name answers from this Mac too (tailnet), but without the relay's checks. Use the forward's number: if it fell to 8082, use `http://localhost:8082` and `EXPO_PACKAGER_PROXY_URL` to match.
+If the app still fetches its bundle from the workspace's long name or over `https`, the project's Expo is older than SDK 58: that name answers from this Mac too (tailnet), but without the relay's checks.
 
 **Open in iOS Simulator (an Expo app).** On a workspace's Metro ports (8081 and 19000) the menu bar item and the Dock menu also offer **Open 8081 in iOS Simulator**. One press does the following, in order, and stops at the first thing that is missing:
 
@@ -53,11 +49,7 @@ If the app still fetches its bundle from the workspace's long name, the forward 
 4. Checks that Expo Go is in that simulator. If not, it says so: Expo's page for Expo Go offers a build for the iOS Simulator. Oerba installs nothing into it.
 5. Opens `exp://127.0.0.1:<the number it took>` in Expo Go and says what it did.
 
-Start Expo in the workspace with the forward's address, or the phone is told the workspace's own name for its bundle (Expo's CLI builds the bundle address from this variable where it is set, otherwise from the request's `Forwarded` or `X-Forwarded-Host` header, otherwise from its own host and port):
-
-```sh
-EXPO_PACKAGER_PROXY_URL=http://127.0.0.1:8081 npx expo start     # the number the menu shows, if it was not 8081
-```
+Start Expo in the workspace as usual (`npx expo start`); the project needs Expo SDK 58 or later, for the reason under *React Native and Expo* above.
 
 Booting a simulator is the only thing this changes on the Mac: it never erases, shuts down, creates or deletes one. Only the app's own menu starts it; no page can.
 

@@ -142,8 +142,23 @@ export function neverSent(name: string): boolean {
   return NEVER.has(n) || n.startsWith("sec-fetch-") || n.startsWith("x-forwarded-") || n.startsWith("tailscale-user-");
 }
 
+/** The relay's own `Forwarded` header (RFC 7239): the address the client asked, over plain http, which is where the request was
+    really made. Without it a dev server sees only what the lab's Caddy adds for the hop it answered, `X-Forwarded-Proto: https` and
+    `X-Forwarded-Host: <the app's name>`. Expo's dev server builds its manifest's addresses from `Forwarded` first, then from those
+    (`resolveForwarded.ts` and `UrlCreator.ts` in @expo/cli, SDK 58), so without this header Expo Go was told to fetch its bundle from
+    `https://127.0.0.1:<n>`, where the relay speaks no TLS, even with `EXPO_PACKAGER_PROXY_URL` set (24 Nov 2026). A client's own
+    `Forwarded` is never sent (`NEVER`); this one is made only from a `Host` of the loopback shape, which `vet` has already held to
+    the forward's own number, and is null for anything else. On-Demand reads no `Forwarded` header (only `X-Forwarded-*`, in
+    ondemandd/httpmw/realip.go) and the lab's Caddy passes it through untouched, so it reaches the dev server alone. */
+export function forwardedHeader(host: string | string[] | undefined): string | null {
+  if (typeof host !== "string") return null;
+  const h = host.toLowerCase();
+  return /^(?:localhost|127\.0\.0\.1|\[::1\]):[0-9]{1,5}(?![\s\S])/.test(h) ? `proto=http;host="${h}"` : null;
+}
+
 /** The headers that go upstream: everything the client sent but what is never sent, and any header the Connection header names;
-    `Host` is the app's name. For an upgrade the caller adds `connection: upgrade` and `upgrade: websocket` back itself. */
+    `Host` is the app's name, and `Forwarded` is the relay's own (`forwardedHeader`). For an upgrade the caller adds
+    `connection: upgrade` and `upgrade: websocket` back itself. */
 export function upstreamHeaders(incoming: Headers, name: string, cookieNames: ReadonlySet<string> = new Set()): Record<string, string | string[]> {
   const named = new Set(one(incoming["connection"]).toLowerCase().split(",").map((s) => s.trim()).filter((s) => s !== ""));
   const out: Record<string, string | string[]> = {};
@@ -154,6 +169,8 @@ export function upstreamHeaders(incoming: Headers, name: string, cookieNames: Re
     out[key] = v;
   }
   out["host"] = name;
+  const f = forwardedHeader(incoming["host"]);
+  if (f !== null) out["forwarded"] = f;
   return out;
 }
 

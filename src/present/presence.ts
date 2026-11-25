@@ -193,7 +193,7 @@ export class Presence {
       say(words.title, words.body);
       if (outcome.kind === "opened" && !this.hinted) {
         this.hinted = true;
-        const h = expoHint(f.info.local);
+        const h = expoHint();
         say(h.title, h.body);
       }
     });

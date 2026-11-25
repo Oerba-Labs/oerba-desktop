@@ -92,7 +92,8 @@ test("the address is built from an integer port alone", () => {
   assert.equal(expoUrl(65535), "exp://127.0.0.1:65535");
   assert.equal(expoUrl(8082), "exp://127.0.0.1:8082");
   for (const bad of [0, -1, 65536, 80.5, NaN, Infinity, "8081", "8081/../x", null, undefined, {}, [8081]]) { assert.equal(expoUrl(bad), null, String(bad)); assert.equal(isPort(bad), false); }
-  assert.equal(expoHint(8082).body.includes("EXPO_PACKAGER_PROXY_URL=http://127.0.0.1:8082"), true);
+  assert.equal(expoHint().title, "Expo SDK 58 or later");
+  assert.ok(expoHint().body.length <= 200, "the note fits the notification's 200 characters");
   assert.deepEqual([...METRO_PORTS], [8081, 19000]);
 });
 

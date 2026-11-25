@@ -29,9 +29,6 @@ export const SIMULATOR_ID = "com.apple.iphonesimulator";
 /** The deep link that shows a device in Device Hub, built from a UUID-shaped UDID alone; null for anything else. */
 export const deviceHubUrl = (udid: unknown): string | null => (isUdid(udid) ? `devices://device/open?id=${udid}` : null);
 
-/** What the person is told to start Expo with, so the bundle's address in its manifest is the forward's and not the workspace's name. */
-export const packagerProxy = (port: number): string => `EXPO_PACKAGER_PROXY_URL=http://127.0.0.1:${port}`;
-
 /** `com.apple.CoreSimulator.SimRuntime.iOS-26-5` is iOS 26.5, [26, 5]. Other platforms' runtimes (tvOS, watchOS, visionOS) are null. */
 export function iosVersion(runtime: string): number[] | null {
   const m = /^com\.apple\.CoreSimulator\.SimRuntime\.iOS-([0-9]{1,3})(?:-([0-9]{1,3}))?(?:-([0-9]{1,3}))?(?![\s\S])/.exec(runtime);
@@ -109,5 +106,7 @@ export function describe(o: Outcome): Say {
   }
 }
 
-/** The one-off note after a first success: Expo builds the bundle's address from this variable where it is set. */
-export const expoHint = (port: number): Say => ({ title: "Start Expo with the forward's address", body: `In the workspace: ${packagerProxy(port)} npx expo start. Without it Expo tells the phone the workspace's own name.` });
+/** The one-off note after a first success. Expo builds the bundle's address from the relay's own `Forwarded` header from SDK 58; an
+    older Expo takes the scheme from the `X-Forwarded-Proto: https` the front door adds, and no setting of its own changes that
+    (`EXPO_PACKAGER_PROXY_URL` sets the host but not the scheme, 24 Nov 2026), so its app asks the forward for TLS it does not speak. */
+export const expoHint = (): Say => ({ title: "Expo SDK 58 or later", body: "The forward tells Expo the phone's address, which Expo reads from SDK 58. An older project's app is sent to an https address and cannot load." });

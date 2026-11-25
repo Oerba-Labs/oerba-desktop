@@ -4,7 +4,7 @@ import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import { createHash } from "node:crypto";
-import { AGENT, cleanPath, cookieDeletes, cookieUpstream, setCookieDown, fetchSiteAllowed, hostAllowed, loopbackUpstream, neverSent, ONDEMAND, originAllowed, responseHeaders, rewriteLocation, upstreamHeaders, upstreamName, vet } from "../src/relay/rules";
+import { AGENT, cleanPath, cookieDeletes, cookieUpstream, setCookieDown, fetchSiteAllowed, forwardedHeader, hostAllowed, loopbackUpstream, neverSent, ONDEMAND, originAllowed, responseHeaders, rewriteLocation, upstreamHeaders, upstreamName, vet } from "../src/relay/rules";
 import { COMMON_PORTS, RelayManager } from "../src/relay/manager";
 import { approvedOpen, localAddress, NOTIFY_PORTS, WEB_PORTS } from "../src/policy/browser";
 import { buildMenu, labelsOf } from "../src/present/menu";
@@ -109,14 +109,26 @@ test("what is never sent upstream, and the token parameters cut from the address
     "tailscale-user-login": "boss@github", "x-real-ip": "1.1.1.1", connection: "keep-alive, x-private", "x-private": "1", "keep-alive": "5", upgrade: "h2c", "transfer-encoding": "chunked", te: "trailers", expect: "100-continue",
     accept: "text/html", "user-agent": "ua", "x-app": "kept", "content-type": "application/json",
   }, "8081--main--demo--alice.ondemand.oerba.dev");
-  assert.deepEqual(Object.keys(sent).sort(), ["accept", "content-type", "host", "user-agent", "x-app"]);
+  assert.deepEqual(Object.keys(sent).sort(), ["accept", "content-type", "forwarded", "host", "user-agent", "x-app"]);
   assert.equal(sent["host"], "8081--main--demo--alice.ondemand.oerba.dev");
+  assert.equal(sent["forwarded"], 'proto=http;host="localhost:8081"', "the relay's own Forwarded, never the client's");
   for (const n of ["Origin", "Authorization", "Sec-Fetch-Mode", "X-Forwarded-Host", "Forwarded", "On-Demand-Session-Token", "Tailscale-User-Login", "Transfer-Encoding"]) assert.equal(neverSent(n), true, n);
   assert.equal(cleanPath("/a?x=1&access_token=s&ondemand_session_token=t&y=2"), "/a?x=1&y=2");
   assert.equal(cleanPath("/a?ACCESS_TOKEN=s"), "/a");
   assert.equal(cleanPath("/a?%61ccess_token=s&k=v"), "/a?k=v");
   assert.equal(cleanPath("/a?q=access_token"), "/a?q=access_token");
   assert.equal(cleanPath("/index.bundle"), "/index.bundle");
+});
+
+test("the relay tells the dev server where the request was made, from a loopback Host alone", () => {
+  assert.equal(forwardedHeader("127.0.0.1:8081"), 'proto=http;host="127.0.0.1:8081"');
+  assert.equal(forwardedHeader("LOCALHOST:5173"), 'proto=http;host="localhost:5173"');
+  assert.equal(forwardedHeader("[::1]:19000"), 'proto=http;host="[::1]:19000"');
+  for (const h of [undefined, ["127.0.0.1:8081"], "", "127.0.0.1", "evil.example:8081", "127.0.0.1:8081\n", "127.0.0.1:8081\"", '127.0.0.1:8081";proto=https', "127.0.0.1:808100", "localhost:8081.evil", "[::2]:8081"]) {
+    assert.equal(forwardedHeader(h as string | string[] | undefined), null, JSON.stringify(h));
+  }
+  assert.equal(upstreamHeaders({ host: "evil:8081", forwarded: "proto=https" }, "n")["forwarded"], undefined, "no loopback Host: no Forwarded, and the client's is never sent");
+  assert.equal(upstreamHeaders({ host: "127.0.0.1:8081", connection: "forwarded" }, "n")["forwarded"], 'proto=http;host="127.0.0.1:8081"', "a Connection header naming it does not take the relay's away");
 });
 
 test("a response comes back without hop-by-hop headers, and a redirect to the app's name comes home", () => {
@@ -268,7 +280,7 @@ test("a websocket with a wrong Host or Origin, or from another site, is refused 
   assert.equal(upgrades, before);
 });
 
-test("no browser header, credential, forwarded header or token reaches the stand-in", async () => {
+test("no browser header, credential, client's forwarded header or token reaches the stand-in; the relay's own Forwarded does", async () => {
   const f = await dev();
   await request(f.local);   // the workspace sets its "session" cookie, so that name is the workspace's own
   const before = seen.length;
@@ -283,7 +295,8 @@ test("no browser header, credential, forwarded header or token reaches the stand
   const got = seen.at(-1)!;
   assert.equal(got.url, "/x?keep=1");
   assert.equal(got.headers["cookie"], "session=abc", "another program's cookie on localhost is not sent, nor On-Demand's");
-  for (const h of ["origin", "authorization", "proxy-authorization", "on-demand-session-token", "sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest", "sec-fetch-user", "forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "tailscale-user-login"]) assert.equal(got.headers[h], undefined, h);
+  for (const h of ["origin", "authorization", "proxy-authorization", "on-demand-session-token", "sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest", "sec-fetch-user", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "tailscale-user-login"]) assert.equal(got.headers[h], undefined, h);
+  assert.equal(got.headers["forwarded"], `proto=http;host="127.0.0.1:${f.local}"`, "the client's for=6.6.6.6 is replaced by where the request was made");
   assert.equal(got.headers["x-keep"], "yes");
   assert.ok(!JSON.stringify(got).includes("SECRET"));
   // and the same for an upgrade
@@ -291,6 +304,7 @@ test("no browser header, credential, forwarded header or token reaches the stand
   socket.destroy();
   const up = seen.at(-1)!;
   for (const h of ["origin", "authorization", "x-forwarded-host"]) assert.equal(up.headers[h], undefined, `ws ${h}`);
+  assert.equal(up.headers["forwarded"], `proto=http;host="127.0.0.1:${f.local}"`, "ws forwarded");
   assert.equal(up.headers["sec-websocket-protocol"], "expo");
 });
 
