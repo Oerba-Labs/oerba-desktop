@@ -211,3 +211,12 @@ test("an update is ready only once the installer has taken it, and the restart b
   assert.equal(calls.at(-1), "install");
   assert.equal(await u.restartIfAway(), false);   // tried; the next try is a day on
 });
+
+test("no check is made while a download is under way or one is ready, so a check's error cannot mark either failed", async () => {
+  const { engine, calls } = standIn(() => false);
+  const u = new Updater(async () => engine, () => ({ packaged: true, selftest: false, inOerba: true }), () => {});
+  await u.check();
+  assert.equal(u.state.phase, "ready");
+  await u.check();
+  assert.deepEqual(calls, ["check", "download", "stage"]);
+});

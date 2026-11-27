@@ -155,7 +155,8 @@ export class Updater {
 
   /** Asks the feed, and downloads at once what it offers (a version step() found plain), but for one that failed in the last day. */
   async check(): Promise<void> {
-    if (!mayCheck(this.gate())) return;
+    // Not while a download is under way (a check's network error would mark it failed while it went on) or one is ready.
+    if (!mayCheck(this.gate()) || this.state.phase === "downloading" || this.state.phase === "ready") return;
     try { await (await this.wire()).checkForUpdates(); } catch { /* the next check asks again */ }
     if (this.state.phase === "available" && mayDownloadAlone({ version: this.state.version, failed: this.failed, now: this.away?.now() ?? Date.now() })) await this.download();
   }
