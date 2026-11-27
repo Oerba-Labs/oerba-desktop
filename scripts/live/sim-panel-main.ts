@@ -30,7 +30,7 @@ app.whenReady().then(async () => {
   const win = new BrowserWindow({ width: 1100, height: 900, show: true, title: "iPhone panel live run", webPreferences: { ...SAFE } });
   const panel = new SimPanel(policy, SAFE, { window: () => win, relayout: () => undefined, popOut: async () => false });
   try {
-    await checks(panel);
+    await checks(panel, policy);
   } catch (e) {
     say(false, `the run stopped: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
   } finally {
@@ -67,7 +67,7 @@ async function phone(server: { port: number; token: string }, name: string): Pro
   return jpg;
 }
 
-async function checks(panel: SimPanel): Promise<void> {
+async function checks(panel: SimPanel, policy: NavPolicy): Promise<void> {
   const t0 = Date.now();
   await panel.show(udid, "iPhone");
   say(panel.server.running !== null, `serve-sim started for the device in ${Date.now() - t0} ms, on ${panel.server.running?.origin ?? "nothing"}`);
@@ -119,4 +119,14 @@ async function checks(panel: SimPanel): Promise<void> {
   await p.executeJavaScript("location.href = 'https://example.com/'; 1").catch(() => undefined);
   await wait(1000);
   say(p.getURL().startsWith(origin) && refusals.total > before, "the preview cannot be sent to another site");
+
+  // serve-sim stopping by itself: the process listening on its port, once it is seen to be this run's own child, is sent SIGINT
+  // (so that it still takes its loader out), and the panel must drop the preview and forget the origin it allowed.
+  const pid = Number(execFileSync("/usr/sbin/lsof", ["-t", `-iTCP:${running.port}`, "-sTCP:LISTEN"], { encoding: "utf8" }).trim().split("\n")[0]);
+  const parent = Number(execFileSync("/bin/ps", ["-o", "ppid=", "-p", String(pid)], { encoding: "utf8" }).trim());
+  if (!(pid > 0) || parent !== process.pid) { say(false, `the process on ${running.port} is not this run's own (${pid}, parent ${parent})`); return; }
+  process.kill(pid, "SIGINT");
+  for (let i = 0; i < 100 && (panel.server.alive || p.isDestroyed() === false); i++) await wait(100);
+  say(!panel.server.alive && p.isDestroyed(), "when serve-sim stopped by itself, the panel dropped its preview");
+  say(policy.simOrigin === null, "and forgot the origin it allowed");
 }

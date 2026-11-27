@@ -35,6 +35,7 @@ export class SimPanel {
   server: SimServing = new SimServer();
 
   constructor(private readonly policy: NavPolicy, private readonly safe: WebPreferences, private readonly hooks: PanelHooks) {
+    this.server.onGone = () => this.lost();
     const from = (e: IpcMainInvokeEvent): boolean =>
       this.bar !== null && e.sender === this.bar.webContents && isSimbarSender(e.senderFrame?.url, e.senderFrame === e.sender.mainFrame, this.policy);
     ipcMain.handle("simbar:get", (e) => (from(e) ? this.state : null));
@@ -107,6 +108,20 @@ export class SimPanel {
     this.bar = null;
     this.hooks.relayout();
     await this.server.stop();
+  }
+
+  /** serve-sim stopped by itself: the preview goes, and with it the origin it was allowed, so that nothing which later answers on
+      that port is shown; the bar stays, says so, and still offers Pop out. */
+  private lost(): void {
+    this.policy.simOrigin = null;
+    const win = this.hooks.window();
+    const v = this.preview;
+    this.preview = null;
+    if (v) {
+      if (win && !win.isDestroyed()) win.contentView.removeChildView(v);
+      if (!v.webContents.isDestroyed()) v.webContents.close();
+    }
+    if (this.bar) this.say({ ...this.state, status: "The panel's helper stopped. Open in iOS Simulator starts it again; Pop out shows the phone in Device Hub." });
   }
 
   /** Shows the device in Device Hub and closes the panel, so that the phone is driven from one place at a time. */

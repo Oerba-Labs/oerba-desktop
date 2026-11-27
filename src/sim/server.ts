@@ -43,12 +43,15 @@ export interface SimServing {
   readonly alive: boolean;
   start(udid: string): Promise<Started>;
   stop(): Promise<void>;
+  /** Called when serve-sim stopped by itself after it had started (not by stop()): the panel then drops its preview. */
+  onGone?: () => void;
 }
 
 export class SimServer implements SimServing {
   private child: UtilityProcess | null = null;
   private current: Extract<Started, { origin: string }> | null = null;
   private starting: Promise<Started> | null = null;
+  onGone?: () => void;
 
   /** The running preview, if any. */
   get running(): Extract<Started, { origin: string }> | null { return this.current; }
@@ -105,7 +108,10 @@ export class SimServer implements SimServing {
       // serve-sim's start-up notes go to its standard error; they are drained and not kept.
       child.stderr?.on("data", () => undefined);
       child.on("exit", () => {
-        if (this.child === child) { this.child = null; this.current = null; }
+        // stop() lets go of the child before it signals it, so a child still held here stopped by itself.
+        const unasked = this.child === child;
+        if (unasked) { this.child = null; this.current = null; }
+        if (done && unasked) this.onGone?.();
         finish({ why: "its helper stopped while starting" });
       });
     });
