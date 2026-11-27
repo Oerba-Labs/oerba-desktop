@@ -13,8 +13,7 @@
 // What is changed, and why (CHANGE below; serve-sim's licence, Apache-2.0, asks that a changed file say so, and it does):
 //   - serve-sim opens the device in Device Hub (or Simulator) every time it starts, in the background, and has no switch to stop
 //     it. The panel shows the phone itself, and its taps reach the phone with Device Hub closed (tried 26 Nov 2026), so the copy
-//     Oerba carries does not open it: the one call that does (its ensureBooted's openHost) is made false. Pop out still opens
-//     Device Hub, by the app's own command.
+//     Oerba carries does not open it: the one call that does (its ensureBooted's openHost) is made false.
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";

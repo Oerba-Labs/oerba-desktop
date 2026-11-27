@@ -1,6 +1,6 @@
 {
   "name": "oerba-desktop",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Oerba Desktop: a hardened Electron shell around Oerba, opening on a setup screen that walks a person in.",
   "private": true,
   "license": "UNLICENSED",

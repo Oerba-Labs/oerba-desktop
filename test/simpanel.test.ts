@@ -121,7 +121,15 @@ test("with the panel, the sequence does not open Device Hub, and says which devi
   assert.ok(!calls.some((c) => c.startsWith("/usr/bin/open ")), calls.join("\n"));
 });
 
-test("Pop out shows the device by bundle id, and only a UUID-shaped device", async () => {
+test("the panel's bar offers Close alone: no Pop out, in its page, its script or its bridge (taken off in 0.5.2)", () => {
+  const page = readFileSync("static/simbar.html", "utf8");
+  assert.deepEqual([...page.matchAll(/<button\b[^>]*\bid="([^"]+)"/g)].map((m) => m[1]), ["close"]);
+  for (const f of ["static/simbar.html", "src/renderer/simbar.ts", "src/preload-simbar.ts", "src/sim/panel.ts"]) {
+    assert.ok(!/"popout"|popOut\(/.test(readFileSync(f, "utf8")), f);
+  }
+});
+
+test("showDevice (a press without the panel) shows the device by bundle id, and only a UUID-shaped device", async () => {
   const { run, calls } = standIn();
   assert.equal(await showDevice(UDID, run), true);
   assert.deepEqual(calls, [`/usr/bin/open -b com.apple.dt.Devices devices://device/open?id=${UDID}`]);

@@ -1,11 +1,11 @@
-/* The iPhone panel's bar: the device's name, what the panel is doing, Pop out and Close. Every word from the main process is set
+/* The iPhone panel's bar: the device's name, what the panel is doing, and Close. Every word from the main process is set
    with textContent. */
 
 interface BarState { name: string; status: string }
 interface Bridge {
   getState(): Promise<unknown>;
   onState(cb: (state: unknown) => void): void;
-  act(action: "popout" | "close"): Promise<void>;
+  act(action: "close"): Promise<void>;
 }
 
 const bridge = (window as unknown as { oerbaSimbar?: Bridge }).oerbaSimbar;
@@ -21,6 +21,5 @@ function draw(raw: unknown): void {
 if (bridge) {
   bridge.onState(draw);
   void bridge.getState().then(draw);
-  el("popout").addEventListener("click", () => { void bridge.act("popout"); });
   el("close").addEventListener("click", () => { void bridge.act("close"); });
 }

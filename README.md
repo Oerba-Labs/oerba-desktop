@@ -48,7 +48,7 @@ If the app still fetches its bundle from the workspace's long name or over `http
 3. Uses an iPhone simulator that is already booted, or boots the first iPhone of the newest iOS runtime.
 4. Checks that Expo Go is in that simulator. If not, it says so: Expo's page for Expo Go offers a build for the iOS Simulator. Oerba installs nothing into it.
 5. Opens `exp://127.0.0.1:<the number it took>` in Expo Go and says what it did.
-6. Shows the phone in a panel at the right of Oerba's window, beside the page, which keeps the rest of the width. Click to tap, drag to swipe, and type when a field has the focus; serve-sim's own buttons under the phone reload the app's bundle, press Home, take a screenshot, reach the phone's clipboard and turn it, and its side buttons are the phone's own. The bar above the phone has **Pop out**, which shows the same phone in Device Hub (Xcode 27, which replaced Simulator) or Simulator (Xcode 26 and earlier) and closes the panel, and **✕**, which closes it. If the panel cannot start, its bar says why, and Pop out still works.
+6. Shows the phone in a panel at the right of Oerba's window, beside the page, which keeps the rest of the width. Click to tap, drag to swipe, and type when a field has the focus; serve-sim's own buttons under the phone reload the app's bundle, press Home, take a screenshot, reach the phone's clipboard and turn it, and its side buttons are the phone's own. The bar above the phone has the device's name and **✕**, which closes the panel. If the panel cannot start, its bar says why.
 
 Start Expo in the workspace as usual (`npx expo start`); the project needs Expo SDK 58 or later, for the reason under *React Native and Expo* above.
 

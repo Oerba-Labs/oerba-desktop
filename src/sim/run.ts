@@ -29,7 +29,7 @@ export const realRunner: Runner = (file, args, timeoutMs) => new Promise((resolv
 export const simulator = { run: realRunner };
 
 /** Shows a device: in Device Hub (Xcode 27) by its bundle id and deep link, else in Simulator (Xcode 26 and earlier) by its bundle id.
-    True if either opened. Also the iPhone panel's Pop out. */
+    True if either opened. Only a press without the iPhone panel shows a device, which the app no longer makes. */
 export async function showDevice(udid: string, run: Runner): Promise<boolean> {
   if (!isUdid(udid)) return false;
   const hub = deviceHubUrl(udid);

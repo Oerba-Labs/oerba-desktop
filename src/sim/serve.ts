@@ -86,5 +86,5 @@ export function panelWidth(windowWidth: number): number {
   return Math.max(0, Math.min(440, Math.floor(windowWidth / 2)));
 }
 
-/** The panel's own bar, above the preview: the device's name, Pop out and Close. */
+/** The panel's own bar, above the preview: the device's name and Close. */
 export const BAR_HEIGHT = 36;

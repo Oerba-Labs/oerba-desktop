@@ -24,7 +24,6 @@ import { RelayManager } from "./relay/manager";
 import { loopbackUpstream, ONDEMAND } from "./relay/rules";
 import { external, installHardening, setRole } from "./shell/hardening";
 import { SimPanel } from "./sim/panel";
-import { showDevice, simulator } from "./sim/run";
 
 // Before anything loads: a packaged app opened with a command-line switch (a debugger port, no sandbox, no web security)
 // is being asked to run loosened, and does not start. An unpackaged run is the developer's own and is unaffected.
@@ -238,7 +237,7 @@ app.whenReady().then(() => {
   serveBundled(__dirname);
   installHardening(policy);
   panel = new SimPanel(policy, SAFE, {
-    window: () => win, relayout, popOut: (udid) => showDevice(udid, simulator.run),
+    window: () => win, relayout,
     refuse: () => (app.isPackaged && !app.isInApplicationsFolder() ? "Move Oerba to Applications, open it from there, and press Open in iOS Simulator again." : null),
   });
   presence = new Presence({ oerbaOrigin: config.oerbaOrigin, fetchFn: presentFetch, intervalMs: config.presentMs, windowShown: () => !!win && win.isVisible() && !win.isMinimized(), show: showWindow, openRoute, palette: openPalette, openUpdate: () => updateWindow?.show(), restartForUpdate, onIn: () => updater.start(), quit: () => app.quit(), relay, openLocal: (u) => external.open(u), showPanel: (udid, name) => { showWindow(); return panel ? panel.show(udid, name) : Promise.resolve(); } });

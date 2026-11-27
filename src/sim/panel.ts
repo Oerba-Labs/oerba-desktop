@@ -1,5 +1,5 @@
 /* The iPhone panel: a column at the right of Oerba's window, drawn by the app beside Oerba's page, which it does not touch. Its bar
-   is a bundled page (the device's name, Pop out, Close); below it, serve-sim's own preview of the simulator, where a click is a
+   is a bundled page (the device's name and Close); below it, serve-sim's own preview of the simulator, where a click is a
    tap and typing types. The preview is a view of its own:
    - its role ("simulator") lets its top frame be serve-sim's page at the one origin running now, and nothing else, and it may
      make no frames;
@@ -7,7 +7,8 @@
    - it gets no preload, and every permission, download and window is refused, as for every view (src/shell/hardening.ts).
    - its requests may reach serve-sim's origin alone (previewRequestAllowed).
    It is opened only by the app's own menu, after "Open in iOS Simulator" has opened the workspace's app in Expo Go. Closing it,
-   Pop out, closing (hiding) the window, quitting and restarting for an update each stop serve-sim. */
+   closing (hiding) the window, quitting and restarting for an update each stop serve-sim. It has had no Pop out (to Device
+   Hub) since 0.5.2: the owner had it taken off, the panel being where the phone is shown. */
 
 import { BrowserWindow, ipcMain, session, WebContentsView, type IpcMainInvokeEvent, type WebPreferences } from "electron";
 import path from "node:path";
@@ -23,8 +24,6 @@ export interface PanelHooks {
   window(): BrowserWindow | null;
   /** Oerba's own view is laid out again: the panel took, or gave back, its width. */
   relayout(): void;
-  /** Shows the device in Device Hub (Simulator on Xcode 26 and earlier). */
-  popOut(udid: string): Promise<boolean>;
   /** Why the panel may not start here, or null. A packed app outside Applications (run from its disk image, or moved by macOS to
       a random place) is refused: serve-sim names a library inside the app to the simulator, and a path that does not last could
       later hold something else, were serve-sim to stop without taking it out. */
@@ -56,7 +55,6 @@ export class SimPanel {
     ipcMain.handle("simbar:act", async (e, action: unknown) => {
       if (!from(e)) return;
       if (action === "close") await this.close();
-      else if (action === "popout") await this.popOut();
     });
   }
 
@@ -89,7 +87,7 @@ export class SimPanel {
     if (this.udid !== udid || !this.bar) { await this.server.stop(); return; }
     if ("why" in started) {
       this.dropPreview();
-      this.say({ name, status: `Could not start: ${started.why}. Pop out shows it in Device Hub.` });
+      this.say({ name, status: `Could not start: ${started.why}.` });
       return;
     }
     this.policy.simOrigin = started.origin;
@@ -141,19 +139,10 @@ export class SimPanel {
   }
 
   /** serve-sim stopped by itself: the preview goes, and with it the origin it was allowed, so that nothing which later answers on
-      that port is shown; the bar stays, says so, and still offers Pop out. */
+      that port is shown; the bar stays and says so. */
   private lost(): void {
     this.dropPreview();
-    if (this.bar) this.say({ ...this.state, status: "The panel's helper stopped. Open in iOS Simulator starts it again; Pop out shows the phone in Device Hub." });
-  }
-
-  /** Shows the device in Device Hub and closes the panel, so that the phone is driven from one place at a time. */
-  private async popOut(): Promise<void> {
-    const udid = this.udid;
-    if (udid === null) return;
-    const shown = await this.hooks.popOut(udid);
-    if (shown) await this.close();
-    else this.say({ ...this.state, status: "Device Hub could not be opened." });
+    if (this.bar) this.say({ ...this.state, status: "The panel's helper stopped. Open in iOS Simulator starts it again." });
   }
 
   private say(s: { name: string; status: string }): void {

@@ -231,7 +231,8 @@ export async function runSelftest(h: Hooks): Promise<void> {
         check("Oerba's page gave the panel its width, and no more", oerba.getBounds().width === W - panelWidth(W) && before === W, `${before} -> ${oerba.getBounds().width} of ${W}`);
         const bar = await until("the panel's bar", () => webContents.getAllWebContents().find((w) => w.getURL() === h.policy.simbarUrl));
         const said = await until("the bar's words", async () => { const t = String(await bar.executeJavaScript("document.getElementById('status').textContent")); return t.includes("stand-in") ? t : null; });
-        check("the bar says why the panel could not start, and offers Device Hub", said.includes("Pop out"), said);
+        check("the bar says why the panel could not start, and offers no Pop out", said.includes("a stand-in starts nothing") && !said.includes("Pop out"), said);
+        check("the bar's one button is Close", await bar.executeJavaScript("document.getElementById('popout') === null && [...document.querySelectorAll('button')].map((b) => b.id).join() === 'close'") === true);
         check("no preview was made, and none may be loaded", h.policy.simOrigin === null && !webContents.getAllWebContents().some((w) => w.getURL().startsWith("http://127.0.0.1:3200")));
         check("the bar has a bridge, and Oerba's page still has none", await bar.executeJavaScript("typeof window.oerbaSimbar === 'object'") === true && await oerba.webContents.executeJavaScript("typeof window.oerbaSimbar") === "undefined");
         await bar.executeJavaScript("document.getElementById('close').click(); 1");

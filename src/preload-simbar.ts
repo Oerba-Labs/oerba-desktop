@@ -9,6 +9,6 @@ if (bundled) {
   contextBridge.exposeInMainWorld("oerbaSimbar", {
     getState: (): Promise<unknown> => ipcRenderer.invoke("simbar:get"),
     onState: (cb: (state: unknown) => void): void => { ipcRenderer.on("simbar:state", (_event, state: unknown) => cb(state)); },
-    act: (action: "popout" | "close"): Promise<void> => ipcRenderer.invoke("simbar:act", action),
+    act: (action: "close"): Promise<void> => ipcRenderer.invoke("simbar:act", action),
   });
 }
