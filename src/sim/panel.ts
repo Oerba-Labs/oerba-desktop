@@ -36,6 +36,9 @@ export class SimPanel {
   private preview: WebContentsView | null = null;
   private udid: string | null = null;
   private state = { name: "iPhone", status: "" };
+
+  /** What the bar says now: its device's name, and why the panel is not showing it, if it is not. */
+  get status(): { name: string; status: string } { return this.state; }
   /** serve-sim. Replaced only by the self-test, with one that starts nothing. */
   server: SimServing = new SimServer();
 

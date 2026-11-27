@@ -7,8 +7,6 @@ import { isPort, isUdid } from "./decide";
 /** The version the app carries, pinned in package.json's devDependencies; the tests hold the two to each other. */
 export const SERVE_SIM_VERSION = "0.14.6";
 
-/** The first port tried. serve-sim takes the next free one from here, and says which it took. */
-export const SIM_PORT_FIRST = 3200;
 
 /** The words serve-sim's command is given. Always:
     - its token gate (`--require-token`): without it, any page on localhost may read the preview, and the relay serves
@@ -18,11 +16,12 @@ export const SIM_PORT_FIRST = 3200;
     - no clipboard reader (`--disable clipboard`): its default loads a library into every app of the simulator, Safari's
       included, to read their pasteboard;
     - no Share button (`--disable-share`): the panel is this Mac's alone.
-    Nothing a workspace, a page or Oerba's API said is in them: the UDID is held to a UUID's shape and the port to an integer.
-    Null for anything else. */
-export function serveSimArgs(udid: unknown, port: unknown): string[] | null {
-  if (!isUdid(udid) || !isPort(port) || port < 1024) return null;
-  return ["--require-token", "--host", "127.0.0.1", "--single-device", udid, "--disable", "clipboard", "--disable-share", "--port", String(port), udid];
+    No port: given one, serve-sim tries that port alone and stops if it is taken (by another serve-sim, or a workspace's port
+    Oerba forwards to the same number); given none, it tries 3200 and the next 49, and says which it took (readyLine).
+    Nothing a workspace, a page or Oerba's API said is in them: the UDID is held to a UUID's shape. Null for anything else. */
+export function serveSimArgs(udid: unknown): string[] | null {
+  if (!isUdid(udid)) return null;
+  return ["--require-token", "--host", "127.0.0.1", "--single-device", udid, "--disable", "clipboard", "--disable-share", udid];
 }
 
 /** The environment serve-sim runs in, built rather than inherited. serve-sim reads variables that would load further libraries

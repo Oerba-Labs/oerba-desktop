@@ -39,6 +39,8 @@ if (packaged) {
   // libraries it hands the simulator, must be files on disk.
   stageServeSim("build/resources/serve-sim");
 } else {
+  // A development run uses serve-sim as the packed app carries it, changed as it is there (src/sim/server.ts).
+  stageServeSim(`${out}/resources/serve-sim`);
   // The forged-update run's own entry (npm run tamper); the packaged bundle above never builds it.
   await build({ ...common, ...node, entryPoints: ["src/tamper.ts"], outfile: "dist/tamper.js", external: ["electron"] });
   const tests = readdirSync("test").filter((f) => f.endsWith(".test.ts")).map((f) => `test/${f}`);

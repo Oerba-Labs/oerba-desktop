@@ -1,6 +1,7 @@
 // Stages the part of Expo's serve-sim that the packaged app carries, beside app.asar (electron-builder's extraResources puts the
 // folder at Contents/Resources/serve-sim): its command, the native capture it loads, and ws, the one package that command imports.
-// Copied from node_modules exactly as npm ci installed them, at the version package.json pins; nothing is built or changed here.
+// Copied from node_modules exactly as npm ci installed them, at the version package.json pins; nothing is built here, and one
+// thing is changed, below.
 //
 // What is left out, and why:
 //   - network capture (dist/capture, dist/simnet): a proxy that reads every app's traffic and adds its own root certificate to the
@@ -8,18 +9,24 @@
 //   - camera injection (dist/simcam): a library loaded into apps to feed them a picture as the camera. The panel cannot give it one;
 //   - the middleware build (dist/middleware.*), the sources, the maps and the package's own node_modules, which the command does
 //     not load (it is one bundled file that imports ws alone).
+//
+// What is changed, and why (CHANGE below; serve-sim's licence, Apache-2.0, asks that a changed file say so, and it does):
+//   - serve-sim opens the device in Device Hub (or Simulator) every time it starts, in the background, and has no switch to stop
+//     it. The panel shows the phone itself, and its taps reach the phone with Device Hub closed (tried 26 Nov 2026), so the copy
+//     Oerba carries does not open it: the one call that does (its ensureBooted's openHost) is made false. Pop out still opens
+//     Device Hub, by the app's own command.
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-/** What was reviewed, as digests of the staged folder (scripts/stage-serve-sim.mjs --digest prints them): `all`, of every file,
+/** What was reviewed, with Oerba's one change (CHANGE), as digests of the staged folder (scripts/stage-serve-sim.mjs --digest prints them): `all`, of every file,
     checked as it is staged; `stable`, of the files signing does not change (not the binaries, not a bundle's _CodeSignature),
     checked on the packed app by the release build (scripts/lib-pack.sh). A new version of serve-sim or ws is a new review, and
     new digests written here by hand. */
 export const PINNED = {
   serveSim: "0.14.6",
-  all: "c00e46e501e69d2d747b0493f801b12703d5d8824b6c7ec2adc002a824c43a9f",
-  stable: "a22b555efc869e614e1ecd97080edcebeb442ae88239f47179b94d356215467f",
+  all: "8034b3f7066371a0986f8d58909f0ddba46510d97dab7ca70dcb53e34bdd0af4",
+  stable: "d8444563d92c3efcfdbb09ed14e7372d2cc8eb8198377b69168f84a530b54a3c",
 };
 
 const MACHO = new Set(["feedfacf", "cffaedfe", "feedface", "cefaedfe", "cafebabe", "bebafeca"]);
@@ -42,6 +49,15 @@ export function digest(dir, { stable = false } = {}) {
   return h.digest("hex");
 }
 
+/** The one change to serve-sim's command: exactly this text, found once, made into the other. A new version that no longer has it
+    stops the build, to be looked at again. */
+export const CHANGE = {
+  from: "if(await _0($),J)try{vT($)}catch{}",
+  to: "if(await _0($),!1)try{vT($)}catch{}",
+  notice: "// Changed by Oerba Labs for Oerba Desktop: this copy does not open Device Hub or Simulator when it starts (ensureBooted's\n" +
+    "// openHost is false); the Oerba app's panel shows the device. See scripts/stage-serve-sim.mjs in Oerba-Labs/oerba-desktop.\n",
+};
+
 /** The folders of serve-sim's dist that are carried, beside its command. Each is checked for when it is staged. */
 export const CARRIED = ["native", "bin", "capability-loader", "simax", "simpb"];
 
@@ -56,7 +72,10 @@ export function stageServeSim(dest, { from = "node_modules", parts = CARRIED } =
   const to = path.join(dest, "node_modules", "@expo", "serve-sim");
   mkdirSync(path.join(to, "dist"), { recursive: true });
   for (const f of ["package.json", "LICENSE", "NOTICE"]) cpSync(path.join(src, f), path.join(to, f));
-  cpSync(path.join(src, "dist", "serve-sim.js"), path.join(to, "dist", "serve-sim.js"));
+  const command = readFileSync(path.join(src, "dist", "serve-sim.js"), "utf8");
+  if (command.split(CHANGE.from).length !== 2) throw new Error(`serve-sim ${have}'s command no longer holds the text Oerba changes: look at it again`);
+  const [shebang, rest] = command.startsWith("#!") ? [command.slice(0, command.indexOf("\n") + 1), command.slice(command.indexOf("\n") + 1)] : ["", command];
+  writeFileSync(path.join(to, "dist", "serve-sim.js"), shebang + CHANGE.notice + rest.split(CHANGE.from).join(CHANGE.to));
   for (const d of parts) {
     const p = path.join(src, "dist", d);
     if (!existsSync(p)) throw new Error(`serve-sim ${have} has no dist/${d}`);

@@ -3,19 +3,18 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { isSimbarSender, navigationAllowed, type NavPolicy } from "../src/policy/navigation";
 import { bundledFile, SIMBAR_URL } from "../src/policy/bundled";
-import { BAR_HEIGHT, isSimPage, panelWidth, previewRequestAllowed, previewUrl, readyLine, serveSimArgs, serveSimEnv, SERVE_SIM_VERSION, SIM_PORT_FIRST, simOrigin } from "../src/sim/serve";
+import { BAR_HEIGHT, isSimPage, panelWidth, previewRequestAllowed, previewUrl, readyLine, serveSimArgs, serveSimEnv, SERVE_SIM_VERSION, simOrigin } from "../src/sim/serve";
 import { openInSimulator, showDevice, type Ran, type Runner } from "../src/sim/run";
 
 const UDID = "265CBECB-2CF9-4E96-A149-C2CAEFC1AE27";
 const TOKEN = "Abc-123._~xyzXYZ0123456789";
 
-test("serve-sim is started with its token gate, loopback alone, one device and no clipboard reader", () => {
-  const a = serveSimArgs(UDID, SIM_PORT_FIRST)!;
-  assert.deepEqual(a, ["--require-token", "--host", "127.0.0.1", "--single-device", UDID, "--disable", "clipboard", "--disable-share", "--port", "3200", UDID]);
-  for (const forbidden of ["0.0.0.0", "--allow-any-host-when-insecure", "--cors-origin", "--frame-ancestor", "--network-capture", "--detach", "--no-preview", "--enable"]) assert.ok(!a.includes(forbidden), forbidden);
-  for (const [u, p] of [["not-a-udid", 3200], [`${UDID}\n`, 3200], [`${UDID} --host 0.0.0.0`, 3200], [UDID, 80], [UDID, 70000], [UDID, 3200.5], [UDID, "3200"], [null, 3200]] as const) {
-    assert.equal(serveSimArgs(u, p), null, `${String(u)} ${String(p)}`);
-  }
+test("serve-sim is started with its token gate, loopback alone, one device, no clipboard reader, and no port of its own", () => {
+  const a = serveSimArgs(UDID)!;
+  assert.deepEqual(a, ["--require-token", "--host", "127.0.0.1", "--single-device", UDID, "--disable", "clipboard", "--disable-share", UDID]);
+  // A port given is the only one serve-sim tries; with none, it finds a free one from 3200 and says which.
+  for (const forbidden of ["0.0.0.0", "--allow-any-host-when-insecure", "--cors-origin", "--frame-ancestor", "--network-capture", "--detach", "--no-preview", "--enable", "--port", "-p"]) assert.ok(!a.includes(forbidden), forbidden);
+  for (const u of ["not-a-udid", `${UDID}\n`, `${UDID} --host 0.0.0.0`, null, 3200]) assert.equal(serveSimArgs(u), null, String(u));
 });
 
 test("serve-sim's environment is built, and nothing that loads a library passes", () => {
@@ -26,6 +25,15 @@ test("serve-sim's environment is built, and nothing that loads a library passes"
   });
   assert.deepEqual(env, { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", NO_COLOR: "1", HOME: "/Users/someone", TMPDIR: "/var/folders/x/T/", USER: "someone", LOGNAME: "someone", DEVELOPER_DIR: "/Applications/Xcode.app/Contents/Developer" });
   assert.deepEqual(serveSimEnv({ DEVELOPER_DIR: "relative/Xcode" }), { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", NO_COLOR: "1" });
+});
+
+test("the serve-sim a run uses is the staged copy, which does not open Device Hub, and says it was changed", () => {
+  // npm test builds first, and the development build stages serve-sim beside its bundle (scripts/build.mjs).
+  const staged = readFileSync("dist/resources/serve-sim/node_modules/@expo/serve-sim/dist/serve-sim.js", "utf8");
+  const original = readFileSync("node_modules/@expo/serve-sim/dist/serve-sim.js", "utf8");
+  assert.ok(staged.startsWith("#!/usr/bin/env node\n// Changed by Oerba Labs for Oerba Desktop"), staged.slice(0, 80));
+  assert.equal(original.split("if(await _0($),J)try{vT($)}catch{}").length, 2, "the original opens Device Hub at exactly one place");
+  assert.ok(!staged.includes("if(await _0($),J)try{vT($)}catch{}") && staged.includes("if(await _0($),!1)try{vT($)}catch{}"));
 });
 
 test("the version carried is the one package.json pins", () => {

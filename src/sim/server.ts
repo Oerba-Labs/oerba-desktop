@@ -10,7 +10,7 @@
 import { app, utilityProcess, type UtilityProcess } from "electron";
 import http from "node:http";
 import path from "node:path";
-import { readyLine, serveSimArgs, serveSimEnv, SIM_PORT_FIRST } from "./serve";
+import { readyLine, serveSimArgs, serveSimEnv } from "./serve";
 
 /** How long a start may take: a simulator that has just booted can take a minute before serve-sim's capture is ready. */
 const START_MS = 120_000;
@@ -21,10 +21,11 @@ const KEEP = 64_000;
 
 export type Started = { origin: string; port: number; token: string; udid: string } | { why: string };
 
-/** Where serve-sim's command is: beside the app's own code in a development run, and in the app's Resources, outside app.asar,
-    once packaged (its native addon, and the libraries it loads into the simulator, must be files the simulator can read). */
+/** Where serve-sim's command is: the copy scripts/stage-serve-sim.mjs staged, in the app's Resources, outside app.asar, once packaged
+    (its native addon, and the libraries it loads into the simulator, must be files the simulator can read), and beside the
+    development bundle otherwise, so that both run the same changed copy. */
 export function serveSimEntry(): string {
-  const root = app.isPackaged ? path.join(process.resourcesPath, "serve-sim") : app.getAppPath();
+  const root = app.isPackaged ? path.join(process.resourcesPath, "serve-sim") : path.join(__dirname, "resources", "serve-sim");
   return path.join(root, "node_modules", "@expo", "serve-sim", "dist", "serve-sim.js");
 }
 
@@ -75,7 +76,7 @@ export class SimServer implements SimServing {
   }
 
   private spawn(udid: string): Promise<Started> {
-    const args = serveSimArgs(udid, SIM_PORT_FIRST);
+    const args = serveSimArgs(udid);
     if (args === null) return Promise.resolve({ why: "that simulator could not be named" });
     return new Promise((resolve) => {
       let child: UtilityProcess;

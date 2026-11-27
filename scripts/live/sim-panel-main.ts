@@ -28,7 +28,12 @@ app.whenReady().then(async () => {
   serveBundled(__dirname);
   const policy: NavPolicy = { oerbaOrigin: "https://app.oerba.dev", setupUrl: SETUP_URL, updateUrl: UPDATE_URL, simbarUrl: SIMBAR_URL, simOrigin: null };
   installHardening(policy);
-  const win = new BrowserWindow({ width: 1100, height: 900, show: true, title: "iPhone panel live run", webPreferences: { ...SAFE } });
+  const win = new BrowserWindow({ width: 1100, height: 900, show: false, title: "iPhone panel live run", webPreferences: { ...SAFE } });
+  // Above the person's other windows, on whichever desktop they are on, without taking their keyboard: a covered window's pages
+  // are hidden to Chromium, and a hidden page sends no taps.
+  win.setAlwaysOnTop(true, "floating");
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  win.showInactive();
   const panel = new SimPanel(policy, SAFE, { window: () => win, relayout: () => undefined, popOut: async () => false, refuse: () => null });
   try {
     await checks(panel, policy);
@@ -71,7 +76,7 @@ async function phone(server: { port: number; token: string }, name: string): Pro
 async function checks(panel: SimPanel, policy: NavPolicy): Promise<void> {
   const t0 = Date.now();
   await panel.show(udid, "iPhone");
-  say(panel.server.running !== null, `serve-sim started for the device in ${Date.now() - t0} ms, on ${panel.server.running?.origin ?? "nothing"}`);
+  say(panel.server.running !== null, `serve-sim started for the device in ${Date.now() - t0} ms, on ${panel.server.running?.origin ?? `nothing (the bar says: ${panel.status.status})`}`);
   const origin = panel.server.running?.origin ?? "none";
   let preview: WebContents | undefined;
   for (let i = 0; i < 100 && !preview; i++) { preview = webContents.getAllWebContents().find((w) => w.getURL().startsWith(origin)); if (!preview) await wait(100); }
