@@ -1,4 +1,5 @@
-/* When the app asks for an update, and what it does with an answer. Pure. */
+/* When the app asks for an update, what it does with an answer, what a downloaded update must be, and when the app may restart
+   into one by itself. Pure: the download and the hand-off to macOS's installer are updater.ts's. */
 
 /** How often an update is looked for, once the person is in; the Mac's waking from sleep asks too. */
 export const CHECK_EVERY_MS = 60 * 60 * 1000;
@@ -11,6 +12,10 @@ export const AWAY_IDLE_S = 7 * 60;
 
 /** How often the app asks whether it may restart itself for an update. */
 export const AWAY_POLL_MS = 60 * 1000;
+
+/** How long a version whose download or check failed waits before the app tries it again by itself (a press of Download does
+    not wait): a feed offering something that never passes is not fetched again every hour. */
+export const RETRY_AFTER_MS = 24 * 60 * 60 * 1000;
 
 /** What macOS says of the person's presence (Electron's powerMonitor.getSystemIdleState). */
 export type Idle = "active" | "idle" | "locked" | "unknown";
@@ -27,8 +32,35 @@ export function mayCheck(s: { packaged: boolean; selftest: boolean; inOerba: boo
   return s.packaged && !s.selftest && s.inOerba;
 }
 
-/** A version the app may show: three numbers, as electron-builder writes them (a prerelease tail is allowed and is plain). */
-export const VERSION = /^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}(?:-[0-9A-Za-z.]{1,20})?(?![\s\S])/;
+/** A version the app may take: three numbers, as electron-builder writes them. No prerelease tail: electron-updater's
+    allowPrerelease only chooses which GitHub release it reads, and would take a tail a feed wrote. */
+export const VERSION = /^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}(?![\s\S])/;
+
+/** Whether version a is newer than b, both three numbers; false for anything else. */
+export function newer(a: string, b: string): boolean {
+  if (!VERSION.test(a) || !VERSION.test(b)) return false;
+  const x = a.split(".").map(Number), y = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i]! > y[i]!;
+  return false;
+}
+
+/** What a downloaded update must be before it is handed to macOS's installer, which checks only that it is signed by the
+    same team: a zip of this app's bundle alone (every entry under `<bundle>/`), whose own Info.plist names this app and the
+    version the feed offered, newer than the one running. So a validly signed older build, or another of the team's apps, sent
+    under a newer version's name, is refused before it can be installed. Null when it may go on, or why not. */
+export function updateZipRefusal(z: { entries: string[]; version: string | null; id: string | null }, expect: { bundle: string; id: string; version: string; current: string }): string | null {
+  if (z.entries.length === 0) return "the update holds nothing";
+  if (!z.entries.every((e) => e.startsWith(`${expect.bundle}/`))) return "the update holds more than this app";
+  if (z.id !== expect.id) return "the update is another app";
+  if (z.version !== expect.version) return "the update's version is not the one offered";
+  if (!newer(z.version, expect.current)) return "the update is not newer than this version";
+  return null;
+}
+
+/** Whether the app downloads an offered version by itself: always, but for one whose download or check failed in the last day. */
+export function mayDownloadAlone(s: { version: string; failed: { version: string; at: number } | null; now: number }): boolean {
+  return !(s.failed && s.failed.version === s.version && s.now - s.failed.at < RETRY_AFTER_MS);
+}
 
 export type Phase = "none" | "available" | "downloading" | "ready" | "failed";
 
@@ -58,7 +90,7 @@ export function step(s: UpdateState, e: UpdateEvent): UpdateState {
     case "downloaded":
       return s.phase === "downloading" ? { ...s, phase: "ready", percent: 100 } : s;
     case "error":
-      return s.phase === "downloading" ? { ...s, phase: "failed", problem: "The download did not finish. Nothing was changed." } : s;
+      return s.phase === "downloading" ? { ...s, phase: "failed", problem: "The update did not download, or did not pass its checks. Nothing was changed." } : s;
   }
 }
 

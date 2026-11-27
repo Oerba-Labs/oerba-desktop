@@ -73,11 +73,18 @@ async function main(): Promise<void> {
   appSettings(autoUpdater);
   autoUpdater.forceDevUpdateConfig = true;
   autoUpdater.updateConfigPath = config;
-  check("the app's settings are in force", autoUpdater.autoDownload === false && autoUpdater.autoInstallOnAppQuit === true && autoUpdater.allowDowngrade === false && autoUpdater.allowPrerelease === false);
-  // This run alone does not hand a download to macOS's installer, which the app's setting does at once: here that would give the
-  // control's zip to Squirrel.Mac inside a development Electron. The sum this run tests is checked before that hand-off, whatever
-  // the setting says (the tampered case finds no proxy made for Squirrel.Mac to fetch from).
-  autoUpdater.autoInstallOnAppQuit = false;
+  check("the app's settings are in force", autoUpdater.autoDownload === false && autoUpdater.autoInstallOnAppQuit === false && autoUpdater.allowDowngrade === false && autoUpdater.allowPrerelease === false);
+  // What this run proves is electron-updater's SHA-512 check, which comes before anything else. It does not reach the app's own
+  // hand-off to macOS's installer (realEngine's stage: the zip's checks, then Squirrel.Mac's signature check), which a signed build
+  // alone can exercise; the zip's checks are the unit tests' (test/update.test.ts), on real zips. Here stage only says it ran.
+  let staged = 0;
+  const engine: Engine = {
+    checkForUpdates: () => autoUpdater.checkForUpdates(),
+    downloadUpdate: () => autoUpdater.downloadUpdate(),
+    quitAndInstall: () => { throw new Error("never called here"); },
+    stage: async () => { staged++; },
+    on: ((event: string, cb: (...a: unknown[]) => void) => autoUpdater.on(event as "error", cb as () => void)) as Engine["on"],
+  };
 
   let downloadedEvents = 0;
   const errors: Array<{ message: string; code: unknown }> = [];
@@ -85,8 +92,8 @@ async function main(): Promise<void> {
   autoUpdater.on("error", (e: Error & { code?: unknown }) => { errors.push({ message: String(e.message), code: e.code }); });
 
   const run = async (): Promise<Updater> => {
-    downloadedEvents = 0; errors.length = 0;
-    const updater = new Updater(async () => autoUpdater as unknown as Engine, () => ({ packaged: true, selftest: false, inOerba: true }), () => {});
+    downloadedEvents = 0; errors.length = 0; staged = 0;
+    const updater = new Updater(async () => engine, () => ({ packaged: true, selftest: false, inOerba: true }), () => {});
     // A check downloads what it finds, as the app's does.
     await updater.check();
     check("the feed offered 99.0.0, and the check downloaded it", updater.state.version === "99.0.0" && updater.state.phase !== "available", `${updater.state.phase} ${updater.state.version}`);
@@ -100,7 +107,7 @@ async function main(): Promise<void> {
   const mismatch = errors.find((e) => /sha512 checksum mismatch, expected .+, got /.test(e.message));
   console.log(`     electron-updater said: ${errors.map((e) => `${String(e.code)}: ${e.message.slice(0, 120)}...`).join(" | ") || "nothing"}`);
   check("tampered: the Updater ended in its error state", bad.state.phase === "failed", bad.state.phase);
-  check("tampered: update-downloaded never fired", downloadedEvents === 0);
+  check("tampered: update-downloaded never fired, and nothing was handed on", downloadedEvents === 0 && staged === 0);
   check("tampered: the error is electron-updater's checksum mismatch", !!mismatch && mismatch.code === "ERR_CHECKSUM_MISMATCH", mismatch ? String(mismatch.code) : "no such error");
   const left = files(cacheDir);
   check("tampered: no downloaded file is left", left.length === 0, left.join(", "));

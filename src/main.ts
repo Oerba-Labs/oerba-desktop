@@ -231,7 +231,9 @@ ipcMain.handle("setup:act", async (event, action: unknown) => {
 });
 
 app.whenReady().then(() => {
-  squirrel.on("before-quit-for-update", () => { restartingForUpdate = true; });
+  // A restart that has not ended the app within a minute (it waits at most ten seconds for serve-sim) did not happen: the window
+  // goes back to hiding on close.
+  squirrel.on("before-quit-for-update", () => { restartingForUpdate = true; setTimeout(() => { restartingForUpdate = false; }, 60_000).unref(); });
   squirrel.on("error", () => { restartingForUpdate = false; });
   serveBundled(__dirname);
   installHardening(policy);

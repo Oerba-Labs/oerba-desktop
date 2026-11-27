@@ -1,8 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AWAY_IDLE_S, canDownload, canRestart, CHECK_EVERY_MS, mayCheck, mayRestartAlone, noUpdate, READY_GRACE_MS, step, VERSION, type UpdateState } from "../src/update/decide";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { AWAY_IDLE_S, canDownload, canRestart, CHECK_EVERY_MS, mayCheck, mayDownloadAlone, mayRestartAlone, newer, noUpdate, READY_GRACE_MS, RETRY_AFTER_MS, step, updateZipRefusal, VERSION, type UpdateState } from "../src/update/decide";
 import { notesToText } from "../src/update/notes";
-import { appSettings } from "../src/update/updater";
+import { appSettings, Updater, type Engine } from "../src/update/updater";
+import { checkUpdateZip } from "../src/update/zip";
 import { buildMenu } from "../src/present/menu";
 
 test("updates are looked for by a packaged app, once the person is in, and never by a self-test or an unpackaged run", () => {
@@ -16,8 +21,8 @@ const found = (v: unknown): UpdateState => step(noUpdate(), { type: "found", ver
 
 test("a found update is offered only if its version is plain", () => {
   assert.equal(found("0.4.0").phase, "available");
-  assert.equal(found("1.2.3-beta.1").phase, "available");
-  for (const bad of ["", "0.4", "latest", "1.2.3; rm", "1.2.3\n", "<b>1.0.0</b>", 4, null, undefined, "1.2.3-" + "x".repeat(40)]) assert.equal(found(bad).phase, "none", String(bad));
+  // A prerelease tail is not taken: electron-updater's allowPrerelease only chooses which GitHub release it reads.
+  for (const bad of ["", "0.4", "latest", "1.2.3; rm", "1.2.3\n", "<b>1.0.0</b>", 4, null, undefined, "1.2.3-beta.1", "99.0.0-x", "1.2.3-" + "x".repeat(40)]) assert.equal(found(bad).phase, "none", String(bad));
 });
 
 test("found, then the download, then the restart, each on its own: a download nobody started, or a restart before one, changes nothing", () => {
@@ -82,9 +87,10 @@ test("the app restarts itself only for a ready update, a day after, with the per
   for (const phase of ["none", "available", "downloading", "failed"] as const) assert.equal(mayRestartAlone({ ...ok, phase }), false, phase);
 });
 
-test("electron-updater is set to hand a download to macOS's installer, and never to download alone, go back or take a prerelease", () => {
-  const u = appSettings({ autoDownload: true, autoInstallOnAppQuit: false, autoRunAppAfterInstall: false, allowDowngrade: true, allowPrerelease: true, logger: console as unknown });
-  assert.deepEqual({ ...u }, { autoDownload: false, autoInstallOnAppQuit: true, autoRunAppAfterInstall: true, allowDowngrade: false, allowPrerelease: false, logger: null });
+test("electron-updater is set never to download or hand a download on by itself, go back or take a prerelease", () => {
+  const u = appSettings({ autoDownload: true, autoInstallOnAppQuit: true, autoRunAppAfterInstall: false, allowDowngrade: true, allowPrerelease: true, logger: console as unknown });
+  // The hand-off to macOS's installer is the app's own (stage), after its checks; electron-updater's would come before them.
+  assert.deepEqual({ ...u }, { autoDownload: false, autoInstallOnAppQuit: false, autoRunAppAfterInstall: true, allowDowngrade: false, allowPrerelease: false, logger: null });
 });
 
 test("the menu offers an update still downloading by its window, and a ready one by Restart to Update", () => {
@@ -96,4 +102,112 @@ test("the menu offers an update still downloading by its window, and a ready one
   assert.equal(ready[1]?.label, "Restart to Update to 0.5.2");
   assert.deepEqual(ready[1]?.action, { type: "restart" });
   assert.ok(!buildMenu({ ...base, update: null }).some((m) => /Update/.test(m.label)));
+});
+
+test("a version is newer only by its three numbers", () => {
+  assert.equal(newer("0.5.2", "0.5.1"), true);
+  assert.equal(newer("0.10.0", "0.9.9"), true);
+  assert.equal(newer("1.0.0", "0.99.99"), true);
+  for (const [a, b] of [["0.5.1", "0.5.1"], ["0.5.0", "0.5.1"], ["0.5.2-x", "0.5.1"], ["0.5.2", "x"], ["", "0.5.1"]]) assert.equal(newer(a!, b!), false, `${a} ${b}`);
+});
+
+const expect = { bundle: "Oerba.app", id: "dev.oerba.desktop", version: "0.5.2", current: "0.5.1" };
+const good = { entries: ["Oerba.app/", "Oerba.app/Contents/Info.plist", "Oerba.app/Contents/MacOS/Oerba"], version: "0.5.2", id: "dev.oerba.desktop" };
+
+test("an update is handed to the installer only if it is this app's bundle alone, at the version offered, newer than this one", () => {
+  assert.equal(updateZipRefusal(good, expect), null);
+  assert.match(updateZipRefusal({ ...good, entries: [...good.entries, "Other.app/Contents/Info.plist"] }, expect) ?? "", /more than this app/);
+  assert.match(updateZipRefusal({ ...good, entries: ["Oerba.application/x"] }, expect) ?? "", /more than this app/);
+  assert.match(updateZipRefusal({ ...good, entries: [] }, expect) ?? "", /nothing/);
+  assert.match(updateZipRefusal({ ...good, id: "dev.oerba.other" }, expect) ?? "", /another app/);
+  assert.match(updateZipRefusal({ ...good, id: null }, expect) ?? "", /another app/);
+  // A validly signed older build sent as a newer version is refused, and so is the version running.
+  assert.match(updateZipRefusal({ ...good, version: "0.4.3" }, expect) ?? "", /not the one offered/);
+  assert.match(updateZipRefusal({ ...good, version: "0.5.1" }, { ...expect, version: "0.5.1" }) ?? "", /not newer/);
+  assert.match(updateZipRefusal({ ...good, version: null }, expect) ?? "", /not the one offered/);
+});
+
+test("the zip's check reads real zips with macOS's unzip and plutil", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "oerba-update-zip-"));
+  try {
+    const plist = (id: string, v: string): string => `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>${id}</string><key>CFBundleShortVersionString</key><string>${v}</string></dict></plist>\n`;
+    const make = (name: string, files: Record<string, string>, binary = false): string => {
+      const root = path.join(dir, name);
+      for (const [f, text] of Object.entries(files)) {
+        mkdirSync(path.dirname(path.join(root, f)), { recursive: true });
+        writeFileSync(path.join(root, f), text);
+        if (binary && f.endsWith("Info.plist")) execFileSync("/usr/bin/plutil", ["-convert", "binary1", path.join(root, f)]);
+      }
+      const zip = path.join(dir, `${name}.zip`);
+      execFileSync("/usr/bin/zip", ["-q", "-r", zip, ...Object.keys(files).map((f) => f.split("/")[0]!).filter((v, i, a) => a.indexOf(v) === i)], { cwd: root });
+      return zip;
+    };
+    const app = (v: string, id = "dev.oerba.desktop"): Record<string, string> => ({ "Oerba.app/Contents/Info.plist": plist(id, v), "Oerba.app/Contents/MacOS/Oerba": "x" });
+    assert.equal(await checkUpdateZip(make("good", app("0.5.2")), expect), null);
+    assert.equal(await checkUpdateZip(make("binary", app("0.5.2"), true), expect), null);
+    assert.match(await checkUpdateZip(make("older", app("0.4.3")), expect) ?? "", /not the one offered/);
+    assert.match(await checkUpdateZip(make("other", app("0.5.2", "dev.oerba.other")), expect) ?? "", /another app/);
+    assert.match(await checkUpdateZip(make("extra", { ...app("0.5.2"), "Evil.app/Contents/Info.plist": plist("dev.oerba.desktop", "0.5.2") }), expect) ?? "", /more than this app/);
+    assert.match(await checkUpdateZip(make("noplist", { "Oerba.app/Contents/MacOS/Oerba": "x" }), expect) ?? "", /another app/);
+    assert.match(await checkUpdateZip(path.join(dir, "missing.zip"), expect) ?? "", /could not be read/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a version that failed is not downloaded again by itself for a day; a press, or another version, goes at once", () => {
+  const now = 1_000_000_000_000;
+  assert.equal(mayDownloadAlone({ version: "0.5.2", failed: null, now }), true);
+  assert.equal(mayDownloadAlone({ version: "0.5.2", failed: { version: "0.5.2", at: now - 3600_000 }, now }), false);
+  assert.equal(mayDownloadAlone({ version: "0.5.2", failed: { version: "0.5.2", at: now - RETRY_AFTER_MS }, now }), true);
+  assert.equal(mayDownloadAlone({ version: "0.5.3", failed: { version: "0.5.2", at: now - 3600_000 }, now }), true);
+});
+
+/** An engine that offers 0.5.2, downloads it, and whose installer takes it or refuses it, as told. */
+function standIn(refuse: () => boolean): { engine: Engine; calls: string[] } {
+  const calls: string[] = [];
+  const handlers: Record<string, (x?: unknown) => void> = {};
+  const engine: Engine = {
+    checkForUpdates: async () => { calls.push("check"); handlers["update-available"]?.({ version: "0.5.2", releaseNotes: "" }); },
+    downloadUpdate: async () => { calls.push("download"); handlers["update-downloaded"]?.(); },
+    quitAndInstall: () => { calls.push("install"); },
+    stage: async () => { calls.push("stage"); if (refuse()) throw new Error("the installer refused it"); },
+    on: ((event: string, cb: (x?: unknown) => void) => { handlers[event] = cb; }) as Engine["on"],
+  };
+  return { engine, calls };
+}
+
+test("an update the installer refuses is not ready, offers no restart, and is tried again by itself only a day later", async () => {
+  let clock = 1_000_000_000_000;
+  let refusing = true;
+  const { engine, calls } = standIn(() => refusing);
+  const u = new Updater(async () => engine, () => ({ packaged: true, selftest: false, inOerba: true }), () => {}, { now: () => clock, idle: () => "locked", panelOpen: () => false, before: async () => {} });
+  await u.check();
+  assert.equal(u.state.phase, "failed");
+  assert.equal(u.readyAt, null);
+  assert.equal(canRestart(u.state), false);
+  await u.restart();
+  assert.deepEqual(calls, ["check", "download", "stage"]);   // no install: Restart is not offered, and does nothing
+  clock += 3600_000;
+  await u.check();
+  assert.deepEqual(calls, ["check", "download", "stage", "check"]);   // an hour on: found again, not downloaded again
+  assert.equal(u.state.phase, "available");
+  refusing = false;
+  await u.download();   // a press of Download does not wait
+  assert.equal(u.state.phase, "ready");
+  assert.equal(u.readyAt, clock);
+});
+
+test("an update is ready only once the installer has taken it, and the restart by itself follows the day's rule", async () => {
+  let clock = 1_000_000_000_000;
+  const { engine, calls } = standIn(() => false);
+  const u = new Updater(async () => engine, () => ({ packaged: true, selftest: false, inOerba: true }), () => {}, { now: () => clock, idle: () => "locked", panelOpen: () => false, before: async () => {} });
+  await u.check();
+  assert.deepEqual(calls, ["check", "download", "stage"]);
+  assert.equal(u.state.phase, "ready");
+  assert.equal(await u.restartIfAway(), false);
+  clock += READY_GRACE_MS;
+  assert.equal(await u.restartIfAway(), true);
+  assert.equal(calls.at(-1), "install");
+  assert.equal(await u.restartIfAway(), false);   // tried; the next try is a day on
 });

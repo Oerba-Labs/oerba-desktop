@@ -252,12 +252,13 @@ export async function runSelftest(h: Hooks): Promise<void> {
       checkForUpdates: async () => { calls.push("check"); handlers["update-available"]?.({ version: "9.9.9", releaseNotes: "<h2>What\u2019s new</h2><ul><li>One &amp; two</li></ul><script>alert(1)</script><img src=x onerror=alert(2)>" }); },
       downloadUpdate: async () => { calls.push("download"); handlers["download-progress"]?.({ percent: 50 }); handlers["update-downloaded"]?.(); },
       quitAndInstall: () => { calls.push("install"); },
+      stage: async () => { calls.push("stage"); },
       on: ((event: string, cb: (x?: unknown) => void) => { handlers[event] = cb; }) as Engine["on"],
     };
     h.setEngine(fake);
     const n0u = notes.length;
     await h.getUpdater().check();
-    check("an update found was downloaded at once, and not installed", calls.join() === "check,download" && h.getUpdater().state.phase === "ready", `${calls.join()} ${h.getUpdater().state.phase}`);
+    check("an update found was downloaded, checked and handed to the installer at once, and not installed", calls.join() === "check,download,stage" && h.getUpdater().state.phase === "ready", `${calls.join()} ${h.getUpdater().state.phase}`);
     await until("the restart item in the menu", () => presence.labels().includes("Restart to Update to 9.9.9"));
     const item = presence.menu.find((m) => m.label === "Restart to Update to 9.9.9");
     check("the menu offers 'Restart to Update to 9.9.9', which restarts", item?.action?.type === "restart", JSON.stringify(item?.action));
@@ -273,7 +274,7 @@ export async function runSelftest(h: Hooks): Promise<void> {
     await until("Restart now offered", () => uw.webContents.executeJavaScript("document.getElementById('primary').textContent === 'Restart now'"));
     await uw.webContents.executeJavaScript("document.getElementById('primary').click()", true);
     await until("the install", () => calls.includes("install"));
-    check("Restart now installed, after its own press", calls.join() === "check,download,install", calls.join());
+    check("Restart now installed, after its own press", calls.join() === "check,download,stage,install", calls.join());
     uw.close();
 
     // 4c'. Restarting by itself: only a day after the update was ready, only when macOS says the person is away, the clock and
