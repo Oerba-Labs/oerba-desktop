@@ -2,12 +2,13 @@
    given --selftest. It asserts from the main process, prints one line a check and exits with a status. */
 
 import http from "node:http";
-import { app, BrowserWindow, webContents, type WebContentsView, type WebPreferences } from "electron";
+import { app, autoUpdater as squirrel, BrowserWindow, webContents, type WebContentsView, type WebPreferences } from "electron";
 import type { Config } from "./config";
 import type { NavPolicy } from "./policy/navigation";
 import type { Presence } from "./present/presence";
 import type { RelayManager } from "./relay/manager";
 import type { Engine, Updater } from "./update/updater";
+import type { Idle } from "./update/decide";
 import type { UpdateWindow } from "./update/window";
 import { sink } from "./present/presence";
 import type { Item } from "./present/notify";
@@ -28,6 +29,7 @@ export interface Hooks {
   openPalette(): void;
   getUpdateWindow(): UpdateWindow | null;
   setEngine(e: Engine): void;
+  setIdle(i: Idle | null): void;
   SAFE: WebPreferences;
   fit(view: WebContentsView): void;
   getPanel(): SimPanel | null;
@@ -243,7 +245,7 @@ export async function runSelftest(h: Hooks): Promise<void> {
       }
     }
 
-    // 4c. An update, offered by a stand-in for electron-updater: the menu item, the window, Download and Restart.
+    // 4c. An update, offered by a stand-in for electron-updater: downloaded by itself, said once, then the menu, the window and Restart.
     const calls: string[] = [];
     const handlers: Record<string, (x?: unknown) => void> = {};
     const fake: Engine = {
@@ -253,10 +255,14 @@ export async function runSelftest(h: Hooks): Promise<void> {
       on: ((event: string, cb: (x?: unknown) => void) => { handlers[event] = cb; }) as Engine["on"],
     };
     h.setEngine(fake);
+    const n0u = notes.length;
     await h.getUpdater().check();
-    await until("the update item in the menu", () => presence.labels().includes("Update to 9.9.9…"));
-    check("an update found put 'Update to 9.9.9…' in the menu", true);
-    check("nothing was downloaded or installed by finding it", calls.join() === "check", calls.join());
+    check("an update found was downloaded at once, and not installed", calls.join() === "check,download" && h.getUpdater().state.phase === "ready", `${calls.join()} ${h.getUpdater().state.phase}`);
+    await until("the restart item in the menu", () => presence.labels().includes("Restart to Update to 9.9.9"));
+    const item = presence.menu.find((m) => m.label === "Restart to Update to 9.9.9");
+    check("the menu offers 'Restart to Update to 9.9.9', which restarts", item?.action?.type === "restart", JSON.stringify(item?.action));
+    const said = notes.slice(n0u);
+    check("one notification said it is ready", said.length === 1 && said[0]!.title === "Oerba 9.9.9 is ready", said.map((n) => n.title).join("|"));
     h.getUpdateWindow()?.show();
     const uw = await until("the update window", () => h.getUpdateWindow()?.window);
     await until("the update page", () => !uw.webContents.isLoading() && uw.webContents.getURL() === h.policy.updateUrl);
@@ -264,14 +270,28 @@ export async function runSelftest(h: Hooks): Promise<void> {
     check("the notes show as plain text, with no markup run", shown.includes("• One & two") && !shown.includes("<") && !shown.includes("alert"), JSON.stringify(shown));
     const made = await uw.webContents.executeJavaScript("document.querySelectorAll('img').length + ',' + document.querySelectorAll('script').length");
     check("the update page holds no element made from the notes", made === "0,1", String(made));   // its own script tag alone
-    await uw.webContents.executeJavaScript("document.getElementById('primary').click()", true);
-    await until("the download", () => calls.includes("download"));
-    check("Download downloaded and did not install", !calls.includes("install"), calls.join());
     await until("Restart now offered", () => uw.webContents.executeJavaScript("document.getElementById('primary').textContent === 'Restart now'"));
     await uw.webContents.executeJavaScript("document.getElementById('primary').click()", true);
     await until("the install", () => calls.includes("install"));
     check("Restart now installed, after its own press", calls.join() === "check,download,install", calls.join());
     uw.close();
+
+    // 4c'. Restarting by itself: only a day after the update was ready, only when macOS says the person is away, the clock and
+    // the presence said by the test. (The panel's part of the rule is the unit tests'.)
+    const upd = h.getUpdater();
+    const installs = (): number => calls.filter((c) => c === "install").length;
+    const i0 = installs();
+    upd.readyAt = Date.now() - 25 * 3600_000;
+    h.setIdle("active");
+    check("a day after, with the person at the Mac, it did not restart", !(await upd.restartIfAway()) && installs() === i0);
+    upd.readyAt = Date.now() - 3600_000;
+    h.setIdle("idle");
+    check("an hour after, with the person away, it did not restart", !(await upd.restartIfAway()) && installs() === i0);
+    upd.readyAt = Date.now() - 25 * 3600_000;
+    h.setIdle("locked");
+    check("a day after, with the screen locked, it restarted", (await upd.restartIfAway()) && installs() === i0 + 1, calls.join());
+    check("and, the restart not having ended this run, it does not try again until a day later", !(await upd.restartIfAway()) && installs() === i0 + 1, calls.join());
+    h.setIdle(null);
 
     // 5. Links out. Opening the browser is replaced by a recorder, so nothing real opens.
     const opened: string[] = [];
@@ -328,6 +348,17 @@ export async function runSelftest(h: Hooks): Promise<void> {
     oerba.webContents.downloadURL(`${h.policy.oerbaOrigin}/file`);
     await until("the download refused", () => refusals.total > dl && refusals.has("download"));
     check("a download was cancelled", true);
+
+    // 7. Last, since it closes every window: Electron's own quitAndInstall, which closes the windows before it quits and quits only
+    // once all are closed. The main window must close, not hide, or a restart for an update stops there. Nothing is downloaded
+    // in this run, so Electron then says there is nothing to install, and the app stays.
+    const gone: string[] = [];
+    squirrel.once("error", (e) => { gone.push(String(e.message)); });
+    squirrel.quitAndInstall();
+    await until("the restart's end", () => gone.length > 0 || h.getWin() === null, 5000).catch(() => undefined);
+    await sleep(300);
+    check("Electron's restart for an update closed the main window rather than hiding it", h.getWin() === null, h.getWin() === null ? "" : h.getWin()?.isVisible() ? "still visible" : "hidden, and the app still running");
+    check("and, with no update downloaded, it said so and quit nothing", gone.some((m) => /no update available/i.test(m)), gone.join("|"));
   } catch (e) {
     console.log(`FAIL ${(e as Error).message}`);
     failed++;

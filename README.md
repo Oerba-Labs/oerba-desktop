@@ -111,7 +111,7 @@ The package is arm64 only: every Mac Oerba's people use is Apple silicon, and a 
 
 ### Updates
 
-A packaged app asks GitHub Releases for `latest-mac.yml` once the person is in, and every six hours. It never downloads or installs by itself. When a newer version is found, the menu bar item gains "Update to <version>…", which opens a small window of the app's own with the release's notes (shown as plain text) and two buttons: **Download**, and, once downloaded, **Restart now**; **Later** closes it. Nothing is installed until Restart now is pressed. An unpackaged run never looks. The feed is fixed by the build (`publish` in `electron-builder.yml`); nothing in the app, on the command line or from a page can change it.
+A packaged app asks GitHub Releases for `latest-mac.yml` once the person is in, every hour, and when the Mac wakes. A newer version is downloaded at once and handed to macOS's installer, so the next quit of the app, for any reason, installs it. Once it is ready, a notification says so, and the menu bar item offers **Restart to Update to <version>**; "Update to <version>…" opens a small window of the app's own with the release's notes (shown as plain text), the download's progress and **Restart now**. If the person has not restarted a day after the update was ready, the app restarts itself the next time the Mac has had no input for seven minutes or its screen is locked, and the iPhone panel is closed. An unpackaged run never looks. A downgrade or a prerelease is never taken. The feed is fixed by the build (`publish` in `electron-builder.yml`); nothing in the app, on the command line or from a page can change it.
 
 ## Layout
 

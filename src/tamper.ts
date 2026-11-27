@@ -1,4 +1,4 @@
-/* The forged-update run (npm run tamper): electron-updater's real code, set as the app sets it (askOnly), driven by the app's own
+/* The forged-update run (npm run tamper): electron-updater's real code, set as the app sets it (appSettings), driven by the app's own
    Updater, against a feed on loopback. The feed offers version 99.0.0 as a zip whose listed sha512 is wrong, and then the same zip
    with its true sum as a control. Entered only by scripts/tamper.mjs, which gives it a scratch folder and a cache name of its own;
    it is built into dist/ alone, never into the packaged app. It never calls quitAndInstall, and ends in app.exit(). */
@@ -11,7 +11,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { app } from "electron";
 import { autoUpdater } from "electron-updater";
-import { askOnly, Updater, type Engine } from "./update/updater";
+import { appSettings, Updater, type Engine } from "./update/updater";
 
 /** The scratch folder is removed whole at the end, so it is taken only as scripts/tamper.mjs makes it: an empty folder named
     oerba-tamper-XXXXXX directly in the system's temporary folder, links resolved. Any other value (the home folder, set by hand) is
@@ -70,10 +70,14 @@ async function main(): Promise<void> {
   // electron-updater's dev-config route: the feed is a file of ours, read instead of the packaged app's app-update.yml, only here.
   const config = join(scratch, "dev-app-update.yml");
   writeFileSync(config, `provider: generic\nurl: http://127.0.0.1:${port}/\nupdaterCacheDirName: ${cacheName}\n`);
-  askOnly(autoUpdater);
+  appSettings(autoUpdater);
   autoUpdater.forceDevUpdateConfig = true;
   autoUpdater.updateConfigPath = config;
-  check("the app's settings are in force", autoUpdater.autoDownload === false && autoUpdater.autoInstallOnAppQuit === false && autoUpdater.allowDowngrade === false);
+  check("the app's settings are in force", autoUpdater.autoDownload === false && autoUpdater.autoInstallOnAppQuit === true && autoUpdater.allowDowngrade === false && autoUpdater.allowPrerelease === false);
+  // This run alone does not hand a download to macOS's installer, which the app's setting does at once: here that would give the
+  // control's zip to Squirrel.Mac inside a development Electron. The sum this run tests is checked before that hand-off, whatever
+  // the setting says (the tampered case finds no proxy made for Squirrel.Mac to fetch from).
+  autoUpdater.autoInstallOnAppQuit = false;
 
   let downloadedEvents = 0;
   const errors: Array<{ message: string; code: unknown }> = [];
@@ -83,9 +87,9 @@ async function main(): Promise<void> {
   const run = async (): Promise<Updater> => {
     downloadedEvents = 0; errors.length = 0;
     const updater = new Updater(async () => autoUpdater as unknown as Engine, () => ({ packaged: true, selftest: false, inOerba: true }), () => {});
+    // A check downloads what it finds, as the app's does.
     await updater.check();
-    check("the feed offered 99.0.0", updater.state.phase === "available" && updater.state.version === "99.0.0", `${updater.state.phase} ${updater.state.version}`);
-    await updater.download();
+    check("the feed offered 99.0.0, and the check downloaded it", updater.state.version === "99.0.0" && updater.state.phase !== "available", `${updater.state.phase} ${updater.state.version}`);
     await sleep(300);
     return updater;
   };

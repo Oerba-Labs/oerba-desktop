@@ -1,6 +1,26 @@
 /* When the app asks for an update, and what it does with an answer. Pure. */
 
-export const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
+/** How often an update is looked for, once the person is in; the Mac's waking from sleep asks too. */
+export const CHECK_EVERY_MS = 60 * 60 * 1000;
+
+/** How long a downloaded update waits for the person to restart before the app restarts itself, when they are away. */
+export const READY_GRACE_MS = 24 * 60 * 60 * 1000;
+
+/** Away: the Mac has had no input for this long (seconds), or its screen is locked. */
+export const AWAY_IDLE_S = 7 * 60;
+
+/** How often the app asks whether it may restart itself for an update. */
+export const AWAY_POLL_MS = 60 * 1000;
+
+/** What macOS says of the person's presence (Electron's powerMonitor.getSystemIdleState). */
+export type Idle = "active" | "idle" | "locked" | "unknown";
+
+/** Whether the app may restart itself to install a downloaded update: only when one is ready, a day has passed since it was,
+    the person is away (no input for AWAY_IDLE_S, or the screen locked; "unknown" is not away), and the iPhone panel is closed,
+    so that no simulator session is cut short. */
+export function mayRestartAlone(s: { phase: Phase; readyAt: number | null; now: number; idle: Idle; panelOpen: boolean }): boolean {
+  return s.phase === "ready" && s.readyAt !== null && s.now - s.readyAt >= READY_GRACE_MS && (s.idle === "idle" || s.idle === "locked") && !s.panelOpen;
+}
 
 /** Updates are looked for only by a packaged app, never by a self-test, and only once the person is in. */
 export function mayCheck(s: { packaged: boolean; selftest: boolean; inOerba: boolean }): boolean {
@@ -22,8 +42,9 @@ export type UpdateEvent =
   | { type: "downloaded" }
   | { type: "error" };
 
-/** Moves the state on. A version that is not plain is not offered; the download starts only from "available" (the person's
-    press), and nothing here installs: the restart is a separate press the window sends. */
+/** Moves the state on. A version that is not plain is not offered, and so never downloaded; the download starts only from
+    "available" (the app starts it once a plain version is found) or "failed" (a press of Download, or the next find), and
+    nothing here installs: a restart is the person's press, or the app's own when mayRestartAlone says so. */
 export function step(s: UpdateState, e: UpdateEvent): UpdateState {
   switch (e.type) {
     case "found":

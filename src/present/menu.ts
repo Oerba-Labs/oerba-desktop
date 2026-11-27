@@ -15,6 +15,7 @@ export type Action =
   | { type: "stop"; id: string }
   | { type: "login"; checked: boolean }
   | { type: "update" }
+  | { type: "restart" }
   | { type: "quit" };
 
 export interface MenuItem {
@@ -34,8 +35,8 @@ export interface MenuInput {
   /** Whether each global shortcut was free and registered. */
   paletteKey: boolean;
   chatKey: boolean;
-  /** A version waiting to be offered, or null. */
-  update: string | null;
+  /** An update found (its version, already checked to be plain) and whether it is downloaded and ready, or null. */
+  update: { version: string; ready: boolean } | null;
   /** The localhost forwards running now (src/relay/), shown under their workspaces. */
   forwards?: ForwardInfo[];
 }
@@ -46,7 +47,9 @@ const STARTED = /^(running|starting|pending)$/;
 
 export function buildMenu(i: MenuInput): MenuItem[] {
   const items: MenuItem[] = [{ label: "Open Oerba", action: { type: "open" } }];
-  if (i.update !== null) items.push({ label: `Update to ${i.update}…`, action: { type: "update" } });
+  // A ready update restarts at once, from here; one still downloading (or whose download failed) opens the update window.
+  if (i.update?.ready) items.push({ label: `Restart to Update to ${i.update.version}`, action: { type: "restart" } });
+  else if (i.update) items.push({ label: `Update to ${i.update.version}…`, action: { type: "update" } });
   if (i.inOerba) {
     items.push(SEP);
     const started = (i.now?.workspaces ?? []).filter((w) => STARTED.test(w.status));

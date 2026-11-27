@@ -1,7 +1,7 @@
 /* Oerba Desktop's main process: one window that opens on the bundled setup screen and, once Oerba answers, shows
    Oerba's live pages. It deploys nothing, holds no secret and changes nothing on the computer. */
 
-import { app, BrowserWindow, dialog, ipcMain, net, shell, WebContentsView, type WebPreferences } from "electron";
+import { app, autoUpdater as squirrel, BrowserWindow, dialog, ipcMain, net, powerMonitor, shell, WebContentsView, type WebPreferences } from "electron";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -17,6 +17,7 @@ import { safeRoute } from "./present/routes";
 import { OPEN_PALETTE_JS } from "./present/palette";
 import { Presence } from "./present/presence";
 import { realEngine, Updater, type Engine } from "./update/updater";
+import type { Idle } from "./update/decide";
 import { UpdateWindow } from "./update/window";
 import type { PresentFetch } from "./present/fetch";
 import { RelayManager } from "./relay/manager";
@@ -69,14 +70,27 @@ const run: RunStatus = (file, args) => new Promise((resolve) => {
 const fetchFn: FetchLike = (url, init) => net.fetch(url, init);
 const presentFetch: PresentFetch = (url, init) => net.fetch(url, init);
 let quitting = false;
+// Set when an update's restart begins. Electron's quitAndInstall closes every window first and quits only once all are closed,
+// before any before-quit: were the main window's close still a hide here, the restart would stop at a hidden window, with the
+// app running on the old version until it was quit by hand (0.4.3 and 0.5.0 were installed so). Cleared if the restart fails.
+let restartingForUpdate = false;
 let presence: Presence | null = null;
 // electron-updater's own engine, whose feed is the one the build wrote. Only the self-test may put another in its place.
 let testEngine: Engine | null = null;
+// macOS's word on whether the person is away. Only the self-test may say it instead.
+let testIdle: Idle | null = null;
 const updater = new Updater(
   () => (testEngine ? Promise.resolve(testEngine) : realEngine()),
   () => ({ packaged: app.isPackaged || testEngine !== null, selftest: config.selftest && testEngine === null, inOerba: oerbaView !== null }),
-  (s) => { presence?.setUpdate(s.phase === "none" ? null : s.version); updateWindow?.push(); },
+  (s, before) => {
+    presence?.setUpdate(s.phase === "none" ? null : { version: s.version, ready: s.phase === "ready" });
+    updateWindow?.push();
+    if (s.phase === "ready" && before.phase !== "ready") presence?.updateReady(s.version);
+  },
+  { now: () => Date.now(), idle: (seconds) => testIdle ?? powerMonitor.getSystemIdleState(seconds), panelOpen: () => panel?.server.alive === true, before: async () => { await panel?.close(); } },
 );
+/** A restart for an update asked for from the menu: the iPhone panel goes first, as from the update window. */
+function restartForUpdate(): void { void (async () => { await panel?.close(); await updater.restart(); })(); }
 let updateWindow: UpdateWindow | null = null;
 // The localhost forwards. They dial On-Demand's names; only the self-test may put a loopback stand-in in their place, and
 // only when config.ts found an unpackaged app given --selftest (a packaged app's config never holds one).
@@ -100,7 +114,7 @@ function createWindow(): BrowserWindow {
   w.on("resize", relayout);
   // Closing the window hides it: the app keeps running in the menu bar until Quit or ⌘Q.
   // It also closes the iPhone panel, which stops serve-sim: nothing of it stays armed in the simulator behind a hidden window.
-  w.on("close", (e) => { if (!quitting) { e.preventDefault(); w.hide(); void panel?.close(); } });
+  w.on("close", (e) => { if (!quitting && !restartingForUpdate) { e.preventDefault(); w.hide(); void panel?.close(); } });
   w.on("closed", () => { stopPolling(); win = null; setupView = null; oerbaView = null; void panel?.close(); });
   return w;
 }
@@ -151,7 +165,8 @@ function showOerba(): void {
 }
 
 function showWindow(): void {
-  if (!win) win = createWindow();
+  // A window closed by a restart for an update that then failed is made again, with the setup screen that leads to Oerba.
+  if (!win) { win = createWindow(); showSetup(); }
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
@@ -216,21 +231,25 @@ ipcMain.handle("setup:act", async (event, action: unknown) => {
 });
 
 app.whenReady().then(() => {
+  squirrel.on("before-quit-for-update", () => { restartingForUpdate = true; });
+  squirrel.on("error", () => { restartingForUpdate = false; });
   serveBundled(__dirname);
   installHardening(policy);
   panel = new SimPanel(policy, SAFE, {
     window: () => win, relayout, popOut: (udid) => showDevice(udid, simulator.run),
     refuse: () => (app.isPackaged && !app.isInApplicationsFolder() ? "Move Oerba to Applications, open it from there, and press Open in iOS Simulator again." : null),
   });
-  presence = new Presence({ oerbaOrigin: config.oerbaOrigin, fetchFn: presentFetch, intervalMs: config.presentMs, windowShown: () => !!win && win.isVisible() && !win.isMinimized(), show: showWindow, openRoute, palette: openPalette, openUpdate: () => updateWindow?.show(), onIn: () => updater.start(), quit: () => app.quit(), relay, openLocal: (u) => external.open(u), showPanel: (udid, name) => { showWindow(); return panel ? panel.show(udid, name) : Promise.resolve(); } });
+  presence = new Presence({ oerbaOrigin: config.oerbaOrigin, fetchFn: presentFetch, intervalMs: config.presentMs, windowShown: () => !!win && win.isVisible() && !win.isMinimized(), show: showWindow, openRoute, palette: openPalette, openUpdate: () => updateWindow?.show(), restartForUpdate, onIn: () => updater.start(), quit: () => app.quit(), relay, openLocal: (u) => external.open(u), showPanel: (udid, name) => { showWindow(); return panel ? panel.show(udid, name) : Promise.resolve(); } });
   presence.start();
+  // The Mac's waking from sleep asks for an update too (a laptop asleep at the hour misses it).
+  powerMonitor.on("resume", () => { void updater.check(); });
   // Before an update restarts the app, the iPhone panel stops serve-sim, which takes its loader out of the simulator.
   updateWindow = new UpdateWindow(policy, SAFE, updater, config.selftest, async () => { await panel?.close(); });
   win = createWindow();
   showSetup();
   if (__SELFTEST__ && config.selftest) {
     // Loaded only for an unpackaged app given --selftest (config.ts): the self-test is not in the packaged code path.
-    void import("./selftest").then((m) => m.runSelftest({ config, policy, getWin: () => win, getSetup: () => setupView, getOerba: () => oerbaView, getPresence: () => presence, getUpdater: () => updater, getRelay: () => relay, openPalette, getUpdateWindow: () => updateWindow, setEngine: (e) => { testEngine = e; }, SAFE, fit, getPanel: () => panel }));
+    void import("./selftest").then((m) => m.runSelftest({ config, policy, getWin: () => win, getSetup: () => setupView, getOerba: () => oerbaView, getPresence: () => presence, getUpdater: () => updater, getRelay: () => relay, openPalette, getUpdateWindow: () => updateWindow, setEngine: (e) => { testEngine = e; }, setIdle: (i) => { testIdle = i; }, SAFE, fit, getPanel: () => panel }));
   }
   app.on("activate", () => { if (!win) { win = createWindow(); showSetup(); } else showWindow(); });
 });

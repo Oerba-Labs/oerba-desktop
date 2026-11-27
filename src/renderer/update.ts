@@ -22,7 +22,7 @@ function draw(s: State): void {
   primary.disabled = false;
   primary.dataset["do"] = s.phase === "ready" ? "restart" : "download";
   primary.textContent = s.phase === "ready" ? "Restart now" : "Download";
-  statusEl.textContent = s.phase === "downloading" ? `Downloading… ${s.percent}%` : s.phase === "ready" ? "Downloaded. Oerba restarts only when you press Restart now." : s.problem;
+  statusEl.textContent = s.phase === "downloading" ? `Downloading… ${s.percent}%` : s.phase === "ready" ? "Downloaded. It is installed when Oerba next quits; if you have not restarted it a day from now, Oerba restarts itself when you are away." : s.problem;
   later.textContent = s.phase === "ready" ? "Restart later" : "Later";
 }
 

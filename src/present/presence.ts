@@ -1,6 +1,6 @@
 /* The app's presence outside its window: the menu bar item, notifications, the dock badge and two global shortcuts.
-   It reads /api/now and /api/who and presses nothing: every menu item and every click on a notification only opens the
-   window at a route. Every word from a machine passes through src/present/text.ts before it reaches a native surface. */
+   It reads /api/now and /api/who and presses nothing of Oerba's: a menu item or a click on a notification opens the window at a
+   route, or does something of this app's own on this Mac (a forward, the simulator, Restart to Update, Quit). Every word from a machine passes through src/present/text.ts before it reaches a native surface. */
 
 import { app, globalShortcut, Menu, nativeImage, Notification, Tray, type MenuItemConstructorOptions } from "electron";
 import path from "node:path";
@@ -26,6 +26,8 @@ export interface Deps {
   openRoute(route: string): void;
   palette(): void;
   openUpdate(): void;
+  /** Restarts into a downloaded update (the menu's Restart to Update). */
+  restartForUpdate(): void;
   /** The person is in: the updater may start asking. */
   onIn(): void;
   quit(): void;
@@ -61,7 +63,7 @@ export class Presence {
   private keys = { palette: false, chat: false };
   menu: MenuItem[] = [];
   dockMenu: MenuItem[] = [];
-  private update: string | null = null;
+  private update: { version: string; ready: boolean } | null = null;
   private readonly simPress = new OnePress();
   private hinted = false;
 
@@ -142,8 +144,13 @@ export class Presence {
     app.dock?.setMenu(Menu.buildFromTemplate(this.dockMenu.map((m) => this.toNative(m))));
   }
 
-  /** An update is waiting (its version, already checked to be plain), or none. */
-  setUpdate(version: string | null): void { this.update = version; this.render(); }
+  /** An update found (its version, already checked to be plain), and whether it is ready, or none. */
+  setUpdate(u: { version: string; ready: boolean } | null): void { this.update = u; this.render(); }
+
+  /** Says once, when an update has downloaded, that it is ready; a click opens the update window. */
+  updateReady(version: string): void {
+    sink.show({ title: `Oerba ${version} is ready`, body: "Restart to update now, or Oerba restarts itself when you are away, a day from now.", route: "" }, () => this.d.openUpdate());
+  }
 
   labels(): string[] { return labelsOf(this.menu); }
   dockLabels(): string[] { return labelsOf(this.dockMenu); }
@@ -211,6 +218,7 @@ export class Presence {
     else if (a.type === "route") this.d.openRoute(a.route);
     else if (a.type === "palette") this.d.palette();
     else if (a.type === "update") this.d.openUpdate();
+    else if (a.type === "restart") this.d.restartForUpdate();
     else if (a.type === "forward") void this.startForward(a.owner, a.name, a.port);
     else if (a.type === "simulator") void this.openInSimulator(a.owner, a.name, a.port);
     else if (a.type === "stop") void this.d.relay.stop(a.id).then(() => this.render());
