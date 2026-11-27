@@ -99,7 +99,8 @@ function createWindow(): BrowserWindow {
   const w = new BrowserWindow({ width: 1200, height: 800, minWidth: 640, minHeight: 480, show: !config.selftest, title: "Oerba", backgroundColor: "#F6F7F9", webPreferences: { ...SAFE } });
   w.on("resize", relayout);
   // Closing the window hides it: the app keeps running in the menu bar until Quit or ⌘Q.
-  w.on("close", (e) => { if (!quitting) { e.preventDefault(); w.hide(); } });
+  // It also closes the iPhone panel, which stops serve-sim: nothing of it stays armed in the simulator behind a hidden window.
+  w.on("close", (e) => { if (!quitting) { e.preventDefault(); w.hide(); void panel?.close(); } });
   w.on("closed", () => { stopPolling(); win = null; setupView = null; oerbaView = null; void panel?.close(); });
   return w;
 }
@@ -217,7 +218,10 @@ ipcMain.handle("setup:act", async (event, action: unknown) => {
 app.whenReady().then(() => {
   serveBundled(__dirname);
   installHardening(policy);
-  panel = new SimPanel(policy, SAFE, { window: () => win, relayout, popOut: (udid) => showDevice(udid, simulator.run) });
+  panel = new SimPanel(policy, SAFE, {
+    window: () => win, relayout, popOut: (udid) => showDevice(udid, simulator.run),
+    refuse: () => (app.isPackaged && !app.isInApplicationsFolder() ? "Move Oerba to Applications, open it from there, and press Open in iOS Simulator again." : null),
+  });
   presence = new Presence({ oerbaOrigin: config.oerbaOrigin, fetchFn: presentFetch, intervalMs: config.presentMs, windowShown: () => !!win && win.isVisible() && !win.isMinimized(), show: showWindow, openRoute, palette: openPalette, openUpdate: () => updateWindow?.show(), onIn: () => updater.start(), quit: () => app.quit(), relay, openLocal: (u) => external.open(u), showPanel: (udid, name) => { showWindow(); return panel ? panel.show(udid, name) : Promise.resolve(); } });
   presence.start();
   // Before an update restarts the app, the iPhone panel stops serve-sim, which takes its loader out of the simulator.

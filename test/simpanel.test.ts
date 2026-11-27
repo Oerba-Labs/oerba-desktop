@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { isSimbarSender, navigationAllowed, type NavPolicy } from "../src/policy/navigation";
 import { bundledFile, SIMBAR_URL } from "../src/policy/bundled";
-import { BAR_HEIGHT, isSimPage, panelWidth, previewUrl, readyLine, serveSimArgs, serveSimEnv, SERVE_SIM_VERSION, SIM_PORT_FIRST, simOrigin } from "../src/sim/serve";
+import { BAR_HEIGHT, isSimPage, panelWidth, previewRequestAllowed, previewUrl, readyLine, serveSimArgs, serveSimEnv, SERVE_SIM_VERSION, SIM_PORT_FIRST, simOrigin } from "../src/sim/serve";
 import { openInSimulator, showDevice, type Ran, type Runner } from "../src/sim/run";
 
 const UDID = "265CBECB-2CF9-4E96-A149-C2CAEFC1AE27";
@@ -73,6 +73,18 @@ test("the panel's views go only where they are for, and make no frames", () => {
   assert.equal(isSimbarSender("http://127.0.0.1:3200/", true, policy), false);
   assert.equal(isSimbarSender(policy.updateUrl, true, policy), false);
   for (const f of ["simbar/simbar.html", "simbar/simbar.css", "simbar/simbar.js"]) assert.notEqual(bundledFile(`oerba-app://app/${f}`), null, f);
+});
+
+test("the preview's requests reach serve-sim's origin alone", () => {
+  const o = "http://127.0.0.1:3200";
+  for (const url of ["http://127.0.0.1:3200/", "http://127.0.0.1:3200/api/screenshot?x=1", "ws://127.0.0.1:3200/exec-ws", "data:image/png;base64,AAAA", "blob:http://127.0.0.1:3200/4f1c-uuid"]) {
+    assert.equal(previewRequestAllowed(url, o), true, url);
+  }
+  for (const url of ["http://127.0.0.1:3201/", "http://localhost:3200/", "https://127.0.0.1:3200/", "wss://127.0.0.1:3200/x", "https://example.com/", "https://chrome-devtools-frontend.appspot.com/x",
+    "http://u:p@127.0.0.1:3200/", "blob:https://example.com/uuid", "blob:http://127.0.0.1:3201/uuid", "file:///etc/hosts", "oerba-app://app/simbar/simbar.html", "not a url"]) {
+    assert.equal(previewRequestAllowed(url, o), false, url);
+  }
+  assert.equal(previewRequestAllowed("http://127.0.0.1:3200/", null), false, "no preview running: no request");
 });
 
 test("the panel takes at most 440 points and never more than half the window", () => {

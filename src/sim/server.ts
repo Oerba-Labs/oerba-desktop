@@ -37,7 +37,7 @@ function ready(port: number): Promise<boolean> {
   });
 }
 
-/** What the panel needs of a serve-sim: the real one below, or the self-test's stand-in, which starts nothing. */
+/** What the panel needs of a serve-sim: the real one below, or the self-test's own, which starts nothing. */
 export interface SimServing {
   readonly running: Extract<Started, { origin: string }> | null;
   readonly alive: boolean;
@@ -51,6 +51,9 @@ export class SimServer implements SimServing {
   private child: UtilityProcess | null = null;
   private current: Extract<Started, { origin: string }> | null = null;
   private starting: Promise<Started> | null = null;
+  /** Moved by every stop(): a start that was waiting for the last serve-sim to go does not go on to start one if a stop came
+      meanwhile (the panel was closed during a switch of device). */
+  private epoch = 0;
   onGone?: () => void;
 
   /** The running preview, if any. */
@@ -63,8 +66,11 @@ export class SimServer implements SimServing {
   async start(udid: string): Promise<Started> {
     if (this.current?.udid === udid && this.child) return this.current;
     if (this.starting) return { why: "the iPhone panel is still starting" };
-    await this.stop();
-    this.starting = this.spawn(udid);
+    const e = this.epoch;
+    this.starting = (async (): Promise<Started> => {
+      await this.halt();
+      return this.epoch === e ? this.spawn(udid) : { why: "the panel was closed while it started" };
+    })();
     try { return await this.starting; } finally { this.starting = null; }
   }
 
@@ -90,11 +96,14 @@ export class SimServer implements SimServing {
         resolve(r);
       };
       const timer = setTimeout(() => { finish({ why: "it did not start in time" }); void this.stop(); }, START_MS);
+      let matched = false;
       const onData = (chunk: Buffer): void => {
-        if (done) return;
+        if (done || matched) return;
         seen = (seen + chunk.toString("utf8")).slice(-KEEP);
         const r = readyLine(seen);
         if (r === null) return;
+        // The first Local line is the one: nothing serve-sim prints afterwards moves the origin or the token.
+        matched = true;
         seen = "";   // the token is not kept beyond what it is needed for
         const poll = async (): Promise<void> => {
           while (!done) {
@@ -117,8 +126,15 @@ export class SimServer implements SimServing {
     });
   }
 
-  /** Stops serve-sim: SIGINT first, so that it takes its loader out of the simulator, then a kill if it has not gone in time. */
+  /** Stops serve-sim, and any start still waiting to begin one. */
   async stop(): Promise<void> {
+    this.epoch++;
+    await this.halt();
+  }
+
+  /** Stops the running serve-sim: SIGINT first, so that it takes its loader out of the simulator, then a kill if it has not gone
+      in time. */
+  private async halt(): Promise<void> {
     const child = this.child;
     this.current = null;
     if (!child) return;

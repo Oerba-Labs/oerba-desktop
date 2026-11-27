@@ -49,6 +49,8 @@ assert_serve_sim() {
     [ -e "$root/@expo/serve-sim/$f" ] || { echo "MISSING from serve-sim: $f" >&2; bad=1; }
   done
   [ -f "$root/ws/wrapper.mjs" ] || { echo "MISSING: ws" >&2; bad=1; }
+  # Its scripts and every other file signing leaves alone are, byte for byte, the copy that was reviewed (PINNED.stable).
+  node scripts/stage-serve-sim.mjs --check "$app/Contents/Resources/serve-sim" || bad=1
   for f in dist/capture dist/simnet dist/simcam dist/middleware.js dist/middleware.cjs src Sources node_modules; do
     [ -e "$root/@expo/serve-sim/$f" ] && { echo "FOUND in serve-sim, which should be left out: $f" >&2; bad=1; }
   done

@@ -66,6 +66,21 @@ export function isSimPage(url: string, origin: string | null): boolean {
   return u.origin === origin && u.username === "" && u.password === "";
 }
 
+/** Whether the preview may make a request: only to serve-sim's own origin (its page, its API and its websockets, the same host and
+    port over http or ws), or to a blob of that origin, or a data: URL, which reach no network. Its page is serve-sim's own code,
+    which draws strings the workspace's app controls (its logs, its labels): were any of them to run as script, it could reach
+    nowhere else with the token it holds. False while no preview runs. */
+export function previewRequestAllowed(url: string, origin: string | null): boolean {
+  if (origin === null) return false;
+  let u: URL;
+  try { u = new URL(url); } catch { return false; }
+  if (u.protocol === "data:") return true;
+  if (u.protocol === "blob:") return previewRequestAllowed(u.pathname, origin) && new URL(u.pathname).origin === origin;
+  if (u.username !== "" || u.password !== "") return false;
+  const o = new URL(origin);
+  return (u.protocol === "http:" || u.protocol === "ws:") && u.host === o.host;
+}
+
 /** The panel's width beside Oerba's page: enough for an iPhone at a useful size and serve-sim's controls, and never more than
     half the window, so Oerba's page keeps the larger part. */
 export function panelWidth(windowWidth: number): number {

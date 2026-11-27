@@ -6,6 +6,7 @@
 import { app, BrowserWindow, session, webContents, type WebContents } from "electron";
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
+import http from "node:http";
 import path from "node:path";
 import { SETUP_URL, SIMBAR_URL, UPDATE_URL } from "../../src/policy/bundled";
 import type { NavPolicy } from "../../src/policy/navigation";
@@ -28,7 +29,7 @@ app.whenReady().then(async () => {
   const policy: NavPolicy = { oerbaOrigin: "https://app.oerba.dev", setupUrl: SETUP_URL, updateUrl: UPDATE_URL, simbarUrl: SIMBAR_URL, simOrigin: null };
   installHardening(policy);
   const win = new BrowserWindow({ width: 1100, height: 900, show: true, title: "iPhone panel live run", webPreferences: { ...SAFE } });
-  const panel = new SimPanel(policy, SAFE, { window: () => win, relayout: () => undefined, popOut: async () => false });
+  const panel = new SimPanel(policy, SAFE, { window: () => win, relayout: () => undefined, popOut: async () => false, refuse: () => null });
   try {
     await checks(panel, policy);
   } catch (e) {
@@ -115,6 +116,16 @@ async function checks(panel: SimPanel, policy: NavPolicy): Promise<void> {
   const main = await session.defaultSession.cookies.get({});
   say(jar.some((c) => c.name.startsWith("serve_sim_access")), "serve-sim's cookie is in the panel's session");
   say(!main.some((c) => c.name.startsWith("serve_sim_access")), "and not in the default session");
+  const media = (await p.executeJavaScript(`[...document.querySelectorAll("video,canvas,img")].map((e) => e.tagName + ":" + (e.videoWidth ?? e.width ?? 0) + "x" + (e.videoHeight ?? e.height ?? 0)).join(" ")`)) as string;
+  console.log(`note the page's pictures: ${media || "none"}; refused before the test: ${refusals.list.filter((x) => x.startsWith("panel-request:")).join(" ") || "nothing"}`);
+  // The preview's requests reach serve-sim alone: a request from its page to another port on this Mac is refused before it is sent.
+  let hits = 0;
+  const other = http.createServer((_q, r) => { hits++; r.end("x"); });
+  await new Promise<void>((r) => other.listen(0, "127.0.0.1", r));
+  const otherPort = (other.address() as { port: number }).port;
+  const sent = (await p.executeJavaScript(`fetch("http://127.0.0.1:${otherPort}/", { mode: "no-cors" }).then(() => "through", () => "refused")`)) as string;
+  other.close();
+  say(sent === "refused" && hits === 0 && refusals.has("panel-request:"), `a request from the preview to another port was refused and never arrived (${sent}, ${hits})`);
   const before = refusals.total;
   await p.executeJavaScript("location.href = 'https://example.com/'; 1").catch(() => undefined);
   await wait(1000);

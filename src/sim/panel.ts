@@ -5,14 +5,15 @@
      make no frames;
    - its session is its own and in memory alone, so serve-sim's cookie never meets Oerba's and is gone when the app quits;
    - it gets no preload, and every permission, download and window is refused, as for every view (src/shell/hardening.ts).
+   - its requests may reach serve-sim's origin alone (previewRequestAllowed).
    It is opened only by the app's own menu, after "Open in iOS Simulator" has opened the workspace's app in Expo Go. Closing it,
-   Pop out, closing the window and quitting each stop serve-sim. */
+   Pop out, closing (hiding) the window, quitting and restarting for an update each stop serve-sim. */
 
-import { BrowserWindow, ipcMain, WebContentsView, type IpcMainInvokeEvent, type WebPreferences } from "electron";
+import { BrowserWindow, ipcMain, session, WebContentsView, type IpcMainInvokeEvent, type WebPreferences } from "electron";
 import path from "node:path";
 import { isSimbarSender, type NavPolicy } from "../policy/navigation";
-import { setRole } from "../shell/hardening";
-import { BAR_HEIGHT, panelWidth, previewUrl } from "./serve";
+import { refusals, setRole } from "../shell/hardening";
+import { BAR_HEIGHT, panelWidth, previewRequestAllowed, previewUrl } from "./serve";
 import { SimServer, type SimServing } from "./server";
 
 /** The preview's session: named, so that every preview shares one, and without "persist:", so it is kept in memory alone. */
@@ -24,6 +25,10 @@ export interface PanelHooks {
   relayout(): void;
   /** Shows the device in Device Hub (Simulator on Xcode 26 and earlier). */
   popOut(udid: string): Promise<boolean>;
+  /** Why the panel may not start here, or null. A packed app outside Applications (run from its disk image, or moved by macOS to
+      a random place) is refused: serve-sim names a library inside the app to the simulator, and a path that does not last could
+      later hold something else, were serve-sim to stop without taking it out. */
+  refuse(): string | null;
 }
 
 export class SimPanel {
@@ -31,11 +36,17 @@ export class SimPanel {
   private preview: WebContentsView | null = null;
   private udid: string | null = null;
   private state = { name: "iPhone", status: "" };
-  /** serve-sim. Replaced only by the self-test, with a stand-in that starts nothing. */
+  /** serve-sim. Replaced only by the self-test, with one that starts nothing. */
   server: SimServing = new SimServer();
 
   constructor(private readonly policy: NavPolicy, private readonly safe: WebPreferences, private readonly hooks: PanelHooks) {
     this.server.onGone = () => this.lost();
+    // The preview's session reaches serve-sim's origin and nothing else (previewRequestAllowed).
+    session.fromPartition(SIM_PARTITION).webRequest.onBeforeRequest((details, callback) => {
+      const ok = previewRequestAllowed(details.url, this.policy.simOrigin);
+      if (!ok) refusals.push(`panel-request:${details.url.slice(0, 80)}`);
+      callback({ cancel: !ok });
+    });
     const from = (e: IpcMainInvokeEvent): boolean =>
       this.bar !== null && e.sender === this.bar.webContents && isSimbarSender(e.senderFrame?.url, e.senderFrame === e.sender.mainFrame, this.policy);
     ipcMain.handle("simbar:get", (e) => (from(e) ? this.state : null));
@@ -57,7 +68,10 @@ export class SimPanel {
     const win = this.hooks.window();
     if (!win) return;
     this.udid = udid;
-    this.say({ name, status: "Starting…" });
+    // A preview of another device, or of a serve-sim no longer running, goes first: its origin is allowed no longer.
+    if (this.server.running?.udid !== udid) this.dropPreview();
+    const refused = this.hooks.refuse();
+    this.say({ name, status: refused ?? "Starting…" });
     if (!this.bar) {
       this.bar = new WebContentsView({ webPreferences: { ...this.safe, preload: path.join(__dirname, "preload-simbar.js") } });
       setRole(this.bar.webContents, "simbar");
@@ -66,9 +80,12 @@ export class SimPanel {
     }
     this.layout();
     this.hooks.relayout();
+    if (refused !== null) return;
     const started = await this.server.start(udid);
-    if (this.udid !== udid || !this.bar) return;   // closed, or moved to another device, while it started
+    // Closed while it started: whatever started is stopped, so that nothing runs, or stays armed in the simulator, without a panel.
+    if (this.udid !== udid || !this.bar) { await this.server.stop(); return; }
     if ("why" in started) {
+      this.dropPreview();
       this.say({ name, status: `Could not start: ${started.why}. Pop out shows it in Device Hub.` });
       return;
     }
@@ -98,29 +115,32 @@ export class SimPanel {
   async close(): Promise<void> {
     const win = this.hooks.window();
     this.udid = null;
-    this.policy.simOrigin = null;
-    for (const v of [this.preview, this.bar]) {
-      if (!v) continue;
-      if (win && !win.isDestroyed()) win.contentView.removeChildView(v);
-      if (!v.webContents.isDestroyed()) v.webContents.close();
-    }
-    this.preview = null;
+    this.dropPreview();
+    const bar = this.bar;
     this.bar = null;
+    if (bar) {
+      if (win && !win.isDestroyed()) win.contentView.removeChildView(bar);
+      if (!bar.webContents.isDestroyed()) bar.webContents.close();
+    }
     this.hooks.relayout();
     await this.server.stop();
+  }
+
+  /** The preview goes, and with it the origin it was allowed. */
+  private dropPreview(): void {
+    this.policy.simOrigin = null;
+    const v = this.preview;
+    this.preview = null;
+    if (!v) return;
+    const win = this.hooks.window();
+    if (win && !win.isDestroyed()) win.contentView.removeChildView(v);
+    if (!v.webContents.isDestroyed()) v.webContents.close();
   }
 
   /** serve-sim stopped by itself: the preview goes, and with it the origin it was allowed, so that nothing which later answers on
       that port is shown; the bar stays, says so, and still offers Pop out. */
   private lost(): void {
-    this.policy.simOrigin = null;
-    const win = this.hooks.window();
-    const v = this.preview;
-    this.preview = null;
-    if (v) {
-      if (win && !win.isDestroyed()) win.contentView.removeChildView(v);
-      if (!v.webContents.isDestroyed()) v.webContents.close();
-    }
+    this.dropPreview();
     if (this.bar) this.say({ ...this.state, status: "The panel's helper stopped. Open in iOS Simulator starts it again; Pop out shows the phone in Device Hub." });
   }
 
