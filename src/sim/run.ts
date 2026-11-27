@@ -28,8 +28,18 @@ export const realRunner: Runner = (file, args, timeoutMs) => new Promise((resolv
 /** How the menu's press runs its programs. The self-test replaces `run`; nothing else does. */
 export const simulator = { run: realRunner };
 
-/** The whole sequence for a forward that took `port` here. Read-only until it boots a simulator. */
-export async function openInSimulator(port: number, run: Runner): Promise<Outcome> {
+/** Shows a device: in Device Hub (Xcode 27) by its bundle id and deep link, else in Simulator (Xcode 26 and earlier) by its bundle id.
+    True if either opened. Also the iPhone panel's Pop out. */
+export async function showDevice(udid: string, run: Runner): Promise<boolean> {
+  if (!isUdid(udid)) return false;
+  const hub = deviceHubUrl(udid);
+  return (hub !== null && (await run(OPEN, ["-b", DEVICE_HUB_ID, hub], QUICK)).code === 0) ||
+    (await run(OPEN, ["-b", SIMULATOR_ID, "--args", "-CurrentDeviceUDID", udid], QUICK)).code === 0;
+}
+
+/** The whole sequence for a forward that took `port` here. Read-only until it boots a simulator. With `window` false the device is
+    not shown in Device Hub: the iPhone panel shows it instead, once the sequence has opened the address. */
+export async function openInSimulator(port: number, run: Runner, opts: { window: boolean } = { window: true }): Promise<Outcome> {
   const url = expoUrl(port);
   if (url === null) return { kind: "failed" };
 
@@ -49,15 +59,12 @@ export async function openInSimulator(port: number, run: Runner): Promise<Outcom
     // Boots asynchronously: wait until it is up (this reads, it changes nothing), or the address would meet a device not ready for it.
     if ((await run(XCRUN, ["simctl", "bootstatus", udid], BOOT)).code !== 0) return { kind: "boot-failed" };
   }
-  // Shows the device: in Device Hub (Xcode 27) by its bundle id and deep link, else in Simulator (Xcode 26 and earlier) by its bundle id.
-  // If neither opens, that does not stop the address being opened, and is said at the end.
-  const hub = deviceHubUrl(udid);
-  const shown = (hub !== null && (await run(OPEN, ["-b", DEVICE_HUB_ID, hub], QUICK)).code === 0) ||
-    (await run(OPEN, ["-b", SIMULATOR_ID, "--args", "-CurrentDeviceUDID", udid], QUICK)).code === 0;
+  // If the window does not open, that does not stop the address being opened, and is said at the end.
+  const shown = opts.window ? await showDevice(udid, run) : true;
 
   if ((await run(XCRUN, ["simctl", "get_app_container", udid, EXPO_GO], QUICK)).code !== 0) return { kind: "no-expo-go", name };
   if ((await run(XCRUN, ["simctl", "openurl", udid, url], QUICK)).code !== 0) return { kind: "open-failed", name };
-  return { kind: "opened", name, booted: pick.kind === "boot", port, shown };
+  return { kind: "opened", udid, name, booted: pick.kind === "boot", port, shown };
 }
 
 /** One press at a time: a press while another runs is ignored (false). */

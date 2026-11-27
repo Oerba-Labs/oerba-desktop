@@ -33,6 +33,8 @@ export interface Deps {
   relay: RelayManager;
   /** Opens an address in the system browser. Called only with one policy/browser.ts approved. */
   openLocal(address: string): void;
+  /** Shows the iPhone panel for a device: absent, the device is shown in Device Hub as before. */
+  showPanel?(udid: string, name: string): Promise<void>;
 }
 
 /** How a notification is shown. The self-test replaces it with a recorder, and nothing else does. */
@@ -188,7 +190,9 @@ export class Presence {
       const f = await this.d.relay.tryStart(owner, name, port);
       this.render();
       if ("why" in f) { say("Could not open the port", `${name}'s ${port}: ${f.why}`); return; }
-      const outcome = await openInSimulator(f.info.local, simulator.run);
+      const panelled = this.d.showPanel !== undefined;
+      const outcome = await openInSimulator(f.info.local, simulator.run, { window: !panelled });
+      if (outcome.kind === "opened" && this.d.showPanel) await this.d.showPanel(outcome.udid, outcome.name);
       const words = describe(outcome);
       say(words.title, words.body);
       if (outcome.kind === "opened" && !this.hinted) {

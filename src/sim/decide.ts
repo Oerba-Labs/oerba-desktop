@@ -83,7 +83,7 @@ export function pickDevice(devices: readonly Device[]): Pick {
 
 /** How one press ended. */
 export type Outcome =
-  | { kind: "opened"; name: string; booted: boolean; port: number; shown: boolean }
+  | { kind: "opened"; udid: string; name: string; booted: boolean; port: number; shown: boolean }
   | { kind: "no-xcode" }
   | { kind: "no-iphone" }
   | { kind: "boot-failed" }

@@ -10,14 +10,15 @@ import type { Updater } from "./updater";
 export class UpdateWindow {
   private win: BrowserWindow | null = null;
 
-  constructor(private readonly policy: NavPolicy, private readonly safe: WebPreferences, private readonly updater: Updater, private readonly quiet: boolean) {
+  constructor(private readonly policy: NavPolicy, private readonly safe: WebPreferences, private readonly updater: Updater, private readonly quiet: boolean,
+    private readonly beforeRestart: () => Promise<void> = async () => undefined) {
     const from = (e: IpcMainInvokeEvent): boolean =>
       this.win !== null && e.sender === this.win.webContents && isUpdateSender(e.senderFrame?.url, e.senderFrame === e.sender.mainFrame, this.policy);
     ipcMain.handle("update:get", (e) => (from(e) ? this.updater.state : null));
     ipcMain.handle("update:act", async (e, action: unknown) => {
       if (!from(e)) return;
       if (action === "download") await this.updater.download();
-      else if (action === "restart") await this.updater.restart();
+      else if (action === "restart") { await this.beforeRestart(); await this.updater.restart(); }
       else if (action === "later") this.win?.close();
     });
   }

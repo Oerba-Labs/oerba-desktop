@@ -101,9 +101,9 @@ test("what the person is told for each outcome", () => {
   assert.match(describe({ kind: "no-xcode" }).body, /Install Xcode from the App Store, open it once/);
   assert.match(describe({ kind: "no-xcode" }).body, /iOS platform/);
   assert.match(describe({ kind: "no-expo-go", name: "iPhone 18 Pro" }).body, /Expo Go.*iOS Simulator|iOS Simulator.*install/);
-  assert.match(describe({ kind: "opened", name: "iPhone 18 Pro", booted: true, port: 8082, shown: true }).body, /Booted iPhone 18 Pro and opened exp:\/\/127\.0\.0\.1:8082/);
-  assert.match(describe({ kind: "opened", name: "iPhone 18 Pro", booted: false, port: 8082, shown: true }).body, /Used iPhone 18 Pro/);
-  assert.match(describe({ kind: "opened", name: "iPhone 18 Pro", booted: true, port: 8082, shown: false }).body, /window could not be shown/);
+  assert.match(describe({ kind: "opened", udid: FIRST, name: "iPhone 18 Pro", booted: true, port: 8082, shown: true }).body, /Booted iPhone 18 Pro and opened exp:\/\/127\.0\.0\.1:8082/);
+  assert.match(describe({ kind: "opened", udid: FIRST, name: "iPhone 18 Pro", booted: false, port: 8082, shown: true }).body, /Used iPhone 18 Pro/);
+  assert.match(describe({ kind: "opened", udid: FIRST, name: "iPhone 18 Pro", booted: true, port: 8082, shown: false }).body, /window could not be shown/);
   for (const k of ["no-iphone", "boot-failed", "failed"] as const) assert.ok(describe({ kind: k }).body.length > 0);
 });
 
@@ -135,7 +135,7 @@ function standIn(s: Script): { run: Runner; calls: string[] } {
 test("the whole sequence: boots the first iPhone, shows Simulator, finds Expo Go, opens the address", async () => {
   const { run, calls } = standIn({});
   const o = await openInSimulator(8082, run);
-  assert.deepEqual(o, { kind: "opened", name: "iPhone 18 Pro", booted: true, port: 8082, shown: true });
+  assert.deepEqual(o, { kind: "opened", udid: FIRST, name: "iPhone 18 Pro", booted: true, port: 8082, shown: true });
   assert.deepEqual(calls, [
     "/usr/bin/xcode-select -p",
     "/usr/bin/xcrun --find simctl",
@@ -153,7 +153,7 @@ test("a booted device is used: nothing is booted", async () => {
   l.devices["com.apple.CoreSimulator.SimRuntime.iOS-26-5"]![0]!.state = "Booted";
   const { run, calls } = standIn({ list: l });
   const o = await openInSimulator(8081, run);
-  assert.deepEqual(o, { kind: "opened", name: "iPhone 17 Pro", booted: false, port: 8081, shown: true });
+  assert.deepEqual(o, { kind: "opened", udid: "3D9E8605-2D02-4516-AFB0-FEF1497E5EFF", name: "iPhone 17 Pro", booted: false, port: 8081, shown: true });
   assert.ok(!calls.some((c) => c.includes(" boot")), calls.join("\n"));
   assert.ok(calls.includes("/usr/bin/xcrun simctl openurl 3D9E8605-2D02-4516-AFB0-FEF1497E5EFF exp://127.0.0.1:8081"));
 });
@@ -204,7 +204,7 @@ test("Device Hub opening means Simulator is not tried", async () => {
 
 test("Neither window can be shown: the address is still opened, and it is said", async () => {
   const { run, calls } = standIn({ open: 1, hub: 1 });
-  assert.deepEqual(await openInSimulator(8081, run), { kind: "opened", name: "iPhone 18 Pro", booted: true, port: 8081, shown: false });
+  assert.deepEqual(await openInSimulator(8081, run), { kind: "opened", udid: FIRST, name: "iPhone 18 Pro", booted: true, port: 8081, shown: false });
   assert.ok(calls.some((c) => c.includes("openurl")));
 });
 

@@ -26,10 +26,44 @@ assert_no_selftest() {
   local app="$1" work="$2" bad=0 needle f
   npx --no-install @electron/asar extract "$app/Contents/Resources/app.asar" "$work/asar" >/dev/null 2>&1
   for needle in "--selftest" "selftest.ts" "oerba-origin" "other-origin" "present-ms" "relay-upstream" "smoke:" "example.invalid" "stand-in" "__open" "runSelftest" "oerba-desktop-tamper" "OERBA_TAMPER" "tamper-test" "5E5E5E5E-0000-4000-8000-5E5E5E5E5E5E"; do
-    if grep -rqF -- "$needle" "$work/asar/main.js" "$work/asar/setup" "$work/asar/update" "$work/asar/preload-setup.js" "$work/asar/preload-update.js"; then
+    if grep -rqF -- "$needle" "$work/asar/main.js" "$work/asar/setup" "$work/asar/update" "$work/asar/simbar" "$work/asar/preload-setup.js" "$work/asar/preload-update.js" "$work/asar/preload-simbar.js"; then
       echo "FOUND in the app code: $needle" >&2; bad=1
     else echo "absent: $needle"; fi
   done
   for f in test scripts src node_modules; do [ -e "$work/asar/$f" ] && { echo "FOUND in app.asar: $f/" >&2; bad=1; }; done
+  return $bad
+}
+
+# The iPhone panel's helper beside app.asar (Contents/Resources/serve-sim): the version package.json pins, the parts
+# scripts/stage-serve-sim.mjs carries, and none it leaves out. With "signed", every binary and bundle in it must also verify
+# strictly and carry the app's own Team ID: the helper process runs under the hardened runtime with library validation on, so a
+# native addon or framework signed by anyone else would not load.
+assert_serve_sim() {
+  local app="$1" mode="${2:-}" bad=0 root want have team f t
+  root="$app/Contents/Resources/serve-sim/node_modules"
+  want="$(node -p "require('./package.json').devDependencies['@expo/serve-sim']")"
+  have="$(node -p 'require(require("node:path").resolve(process.argv[1])).version' "$root/@expo/serve-sim/package.json" 2>/dev/null || echo none)"
+  if [ "$have" = "$want" ]; then echo "serve-sim $have"; else echo "SERVE-SIM IS $have, NOT $want" >&2; bad=1; fi
+  for f in dist/serve-sim.js dist/native/serve-sim-native.node dist/bin/LiveKitWebRTC.framework/LiveKitWebRTC \
+           dist/capability-loader/libServeSimCapabilityLoader.dylib LICENSE NOTICE; do
+    [ -e "$root/@expo/serve-sim/$f" ] || { echo "MISSING from serve-sim: $f" >&2; bad=1; }
+  done
+  [ -f "$root/ws/wrapper.mjs" ] || { echo "MISSING: ws" >&2; bad=1; }
+  for f in dist/capture dist/simnet dist/simcam dist/middleware.js dist/middleware.cjs src Sources node_modules; do
+    [ -e "$root/@expo/serve-sim/$f" ] && { echo "FOUND in serve-sim, which should be left out: $f" >&2; bad=1; }
+  done
+  if [ "$mode" = signed ]; then
+    team="$(codesign -dv "$app" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+    [ -n "$team" ] && [ "$team" != "not set" ] || { echo "THE APP HAS NO TEAM ID" >&2; return 1; }
+    while IFS= read -r -d '' f; do
+      file -b "$f" | grep -q '^Mach-O' || continue
+      t="$(codesign -dv "$f" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+      if codesign --verify --strict "$f" 2>/dev/null && [ "$t" = "$team" ]; then echo "signed: ${f#"$root"/}"
+      else echo "NOT SIGNED BY THE APP'S TEAM: ${f#"$root"/} (${t:-none})" >&2; bad=1; fi
+    done < <(find "$root" -type f -print0)
+    while IFS= read -r -d '' f; do
+      codesign --verify --strict "$f" 2>/dev/null && echo "bundle verifies: ${f#"$root"/}" || { echo "BUNDLE DOES NOT VERIFY: ${f#"$root"/}" >&2; bad=1; }
+    done < <(find "$root" -type d \( -name '*.framework' -o -name '*.app' \) -print0)
+  fi
   return $bad
 }

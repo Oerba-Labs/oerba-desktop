@@ -5,7 +5,7 @@ import { app, BrowserWindow, dialog, ipcMain, net, shell, WebContentsView, type 
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { SETUP_URL, UPDATE_URL } from "./policy/bundled";
+import { SETUP_URL, SIMBAR_URL, UPDATE_URL } from "./policy/bundled";
 import { declareBundledScheme, serveBundled } from "./shell/protocol";
 import { configFrom, TAILSCALE_DOWNLOAD } from "./config";
 import { unexpectedSwitches } from "./policy/argv";
@@ -22,6 +22,8 @@ import type { PresentFetch } from "./present/fetch";
 import { RelayManager } from "./relay/manager";
 import { loopbackUpstream, ONDEMAND } from "./relay/rules";
 import { external, installHardening, setRole } from "./shell/hardening";
+import { SimPanel } from "./sim/panel";
+import { showDevice, simulator } from "./sim/run";
 
 // Before anything loads: a packaged app opened with a command-line switch (a debugger port, no sandbox, no web security)
 // is being asked to run loosened, and does not start. An unpackaged run is the developer's own and is unaffected.
@@ -42,7 +44,8 @@ const config = configFrom(process.argv, app.isPackaged);
 // beside any other copy, so it does not take the lock.)
 if (!config.selftest && !app.requestSingleInstanceLock()) app.exit(0);
 app.on("second-instance", () => { showWindow(); });
-const policy: NavPolicy = { oerbaOrigin: config.oerbaOrigin, setupUrl: SETUP_URL, updateUrl: UPDATE_URL };
+// simOrigin is set by the iPhone panel alone, while it shows serve-sim's preview.
+const policy: NavPolicy = { oerbaOrigin: config.oerbaOrigin, setupUrl: SETUP_URL, updateUrl: UPDATE_URL, simbarUrl: SIMBAR_URL, simOrigin: null };
 declareBundledScheme();
 
 /** The settings every view gets. A remote page's has no preload, no Node and no <webview>. */
@@ -57,6 +60,7 @@ let oerbaView: WebContentsView | null = null;
 let current: SetupState | null = checkingSetup();
 let timer: NodeJS.Timeout | null = null;
 let polling = false;
+let panel: SimPanel | null = null;
 
 // What the probes touch: a file's existence, one fixed program with fixed words and no shell, and a GET.
 const run: RunStatus = (file, args) => new Promise((resolve) => {
@@ -78,18 +82,25 @@ let updateWindow: UpdateWindow | null = null;
 // only when config.ts found an unpackaged app given --selftest (a packaged app's config never holds one).
 const relay = new RelayManager((config.relayUpstream !== null && loopbackUpstream(config.relayUpstream)) || ONDEMAND, () => presence?.redraw());
 
+/** The setup screen or Oerba's page fills the window, less the iPhone panel's column at the right while it is open. */
 function fit(view: WebContentsView): void {
   if (!win) return;
-  const [width, height] = win.getContentSize();
-  view.setBounds({ x: 0, y: 0, width: width ?? 0, height: height ?? 0 });
+  const [width = 0, height = 0] = win.getContentSize();
+  view.setBounds({ x: 0, y: 0, width: width - (panel?.width(width) ?? 0), height });
+}
+
+function relayout(): void {
+  if (setupView) fit(setupView);
+  if (oerbaView) fit(oerbaView);
+  panel?.layout();
 }
 
 function createWindow(): BrowserWindow {
   const w = new BrowserWindow({ width: 1200, height: 800, minWidth: 640, minHeight: 480, show: !config.selftest, title: "Oerba", backgroundColor: "#F6F7F9", webPreferences: { ...SAFE } });
-  w.on("resize", () => { if (setupView) fit(setupView); if (oerbaView) fit(oerbaView); });
+  w.on("resize", relayout);
   // Closing the window hides it: the app keeps running in the menu bar until Quit or ⌘Q.
   w.on("close", (e) => { if (!quitting) { e.preventDefault(); w.hide(); } });
-  w.on("closed", () => { stopPolling(); win = null; setupView = null; oerbaView = null; });
+  w.on("closed", () => { stopPolling(); win = null; setupView = null; oerbaView = null; void panel?.close(); });
   return w;
 }
 
@@ -206,18 +217,25 @@ ipcMain.handle("setup:act", async (event, action: unknown) => {
 app.whenReady().then(() => {
   serveBundled(__dirname);
   installHardening(policy);
-  presence = new Presence({ oerbaOrigin: config.oerbaOrigin, fetchFn: presentFetch, intervalMs: config.presentMs, windowShown: () => !!win && win.isVisible() && !win.isMinimized(), show: showWindow, openRoute, palette: openPalette, openUpdate: () => updateWindow?.show(), onIn: () => updater.start(), quit: () => app.quit(), relay, openLocal: (u) => external.open(u) });
+  panel = new SimPanel(policy, SAFE, { window: () => win, relayout, popOut: (udid) => showDevice(udid, simulator.run) });
+  presence = new Presence({ oerbaOrigin: config.oerbaOrigin, fetchFn: presentFetch, intervalMs: config.presentMs, windowShown: () => !!win && win.isVisible() && !win.isMinimized(), show: showWindow, openRoute, palette: openPalette, openUpdate: () => updateWindow?.show(), onIn: () => updater.start(), quit: () => app.quit(), relay, openLocal: (u) => external.open(u), showPanel: (udid, name) => { showWindow(); return panel ? panel.show(udid, name) : Promise.resolve(); } });
   presence.start();
-  updateWindow = new UpdateWindow(policy, SAFE, updater, config.selftest);
+  // Before an update restarts the app, the iPhone panel stops serve-sim, which takes its loader out of the simulator.
+  updateWindow = new UpdateWindow(policy, SAFE, updater, config.selftest, async () => { await panel?.close(); });
   win = createWindow();
   showSetup();
   if (__SELFTEST__ && config.selftest) {
     // Loaded only for an unpackaged app given --selftest (config.ts): the self-test is not in the packaged code path.
-    void import("./selftest").then((m) => m.runSelftest({ config, policy, getWin: () => win, getSetup: () => setupView, getOerba: () => oerbaView, getPresence: () => presence, getUpdater: () => updater, getRelay: () => relay, openPalette, getUpdateWindow: () => updateWindow, setEngine: (e) => { testEngine = e; }, SAFE, fit }));
+    void import("./selftest").then((m) => m.runSelftest({ config, policy, getWin: () => win, getSetup: () => setupView, getOerba: () => oerbaView, getPresence: () => presence, getUpdater: () => updater, getRelay: () => relay, openPalette, getUpdateWindow: () => updateWindow, setEngine: (e) => { testEngine = e; }, SAFE, fit, getPanel: () => panel }));
   }
   app.on("activate", () => { if (!win) { win = createWindow(); showSetup(); } else showWindow(); });
 });
 
-app.on("before-quit", () => { quitting = true; });
+// Quitting waits for serve-sim to take its loader out of the simulator (at most its stop's ten seconds), then quits again: a loader
+// left behind names a library inside this app, which apps launched later in that simulator would look for.
+app.on("before-quit", (e) => {
+  quitting = true;
+  if (panel?.server.alive) { e.preventDefault(); void panel.close().finally(() => app.quit()); }
+});
 app.on("will-quit", () => { presence?.stop(); updater.stop(); void relay.stopAll(); });
 app.on("window-all-closed", () => { /* the menu bar item keeps the app running */ });

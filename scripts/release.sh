@@ -12,7 +12,8 @@
 #      zip alone, checked against the zip on disk, and the dmg's blockmap is not kept. The Mac updater installs from the zip;
 #   5. checks, and stops at the first that fails: codesign --verify --deep --strict on the app; spctl on the app and
 #      (-t install) on the dmg; xcrun stapler validate on the app and the dmg; every fuse read back from the app is as
-#      configured; and the packed app.asar holds none of the self-test's strings;
+#      configured; the iPhone panel's helper (Resources/serve-sim) is as staged and each binary in it signed by the app's team;
+#      and the packed app.asar holds none of the self-test's strings;
 #   6. refuses to start without release-notes/v<version>.md, written by hand, which is the release's notes; and prints each file's SHA-256 (after stapling), latest-mac.yml, and the command that makes the GitHub release.
 #
 # What it will not do: publish anything, create a tag or a release, upload to GitHub or push; it runs electron-builder with
@@ -72,6 +73,8 @@ spctl -a -vvv -t install "$dmg"
 xcrun stapler validate "$dmg"
 echo "-- fuses read back from the app"
 assert_fuses "$app" || fail "a fuse is not as configured."
+echo "-- the iPhone panel's helper: as staged, every binary in it signed by the app's own team"
+assert_serve_sim "$app" signed || fail "serve-sim is not as staged, or not signed by the app's team."
 echo "-- the self-test is not in the packed app.asar"
 work="$(mktemp -d)"
 assert_no_selftest "$app" "$work" || { rm -rf "$work"; fail "the self-test, tests or sources are in app.asar."; }

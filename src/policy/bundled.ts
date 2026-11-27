@@ -6,6 +6,7 @@ export const SCHEME = "oerba-app";
 export const HOST = "app";
 export const SETUP_URL = `${SCHEME}://${HOST}/setup/setup.html`;
 export const UPDATE_URL = `${SCHEME}://${HOST}/update/update.html`;
+export const SIMBAR_URL = `${SCHEME}://${HOST}/simbar/simbar.html`;
 
 const FILES: Record<string, string> = {
   "/setup/setup.html": "text/html; charset=utf-8",
@@ -14,6 +15,9 @@ const FILES: Record<string, string> = {
   "/update/update.html": "text/html; charset=utf-8",
   "/update/update.css": "text/css; charset=utf-8",
   "/update/update.js": "text/javascript; charset=utf-8",
+  "/simbar/simbar.html": "text/html; charset=utf-8",
+  "/simbar/simbar.css": "text/css; charset=utf-8",
+  "/simbar/simbar.js": "text/javascript; charset=utf-8",
 };
 
 /** The file (relative to the app's folder) and type for a request URL of the scheme, or null for anything not on the list. */

@@ -21,6 +21,15 @@ files:
   - "**/*"
   - "!**/*.map"
 
+# The iPhone panel's helper, Expo's serve-sim (scripts/stage-serve-sim.mjs says which of its parts, and why the rest are left out).
+# It is outside app.asar, at Contents/Resources/serve-sim, because its native addon is loaded from a real file and the simulator
+# loads its libraries by path. Its binaries are signed with the app's identity like every other in the bundle. It is staged one
+# folder down (build/resources/serve-sim/node_modules) because electron-builder always drops a node_modules at the root of what it
+# copies. serve-sim is a devDependency, so that electron-builder does not also pack it into app.asar as one of the app's modules.
+extraResources:
+  - from: build/resources
+    filter: ["serve-sim/**/*"]
+
 mac:
   category: public.app-category.developer-tools
   icon: build-resources/icon.png

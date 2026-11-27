@@ -2,7 +2,7 @@
    given --selftest. It asserts from the main process, prints one line a check and exits with a status. */
 
 import http from "node:http";
-import { app, BrowserWindow, type WebContentsView, type WebPreferences } from "electron";
+import { app, BrowserWindow, webContents, type WebContentsView, type WebPreferences } from "electron";
 import type { Config } from "./config";
 import type { NavPolicy } from "./policy/navigation";
 import type { Presence } from "./present/presence";
@@ -13,6 +13,8 @@ import { sink } from "./present/presence";
 import type { Item } from "./present/notify";
 import { external, refusals, setRole } from "./shell/hardening";
 import { simulator, type Runner } from "./sim/run";
+import type { SimPanel } from "./sim/panel";
+import { panelWidth } from "./sim/serve";
 
 export interface Hooks {
   config: Config;
@@ -28,6 +30,7 @@ export interface Hooks {
   setEngine(e: Engine): void;
   SAFE: WebPreferences;
   fit(view: WebContentsView): void;
+  getPanel(): SimPanel | null;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -187,7 +190,7 @@ export async function runSelftest(h: Hooks): Promise<void> {
         check("a second press while one runs ran nothing", calls.filter((c) => c.endsWith("list devices --json")).length === 1, calls.join(" | "));
         (gate as (() => void) | null)?.();
         await first;
-        check("a booted device was used and nothing booted, and Device Hub was asked by bundle id", !!f && calls.includes(`/usr/bin/open -b com.apple.dt.Devices devices://device/open?id=${SIM}`) && !calls.some((c) => c.includes("iphonesimulator")) && calls.includes(`/usr/bin/xcrun simctl get_app_container ${SIM} host.exp.Exponent`) && !calls.some((c) => c.includes("simctl boot")), calls.join(" | "));
+        check("a booted device was used and nothing booted, and Device Hub was not opened (the panel shows the phone)", !!f && !calls.some((c) => c.startsWith("/usr/bin/open ")) && calls.includes(`/usr/bin/xcrun simctl get_app_container ${SIM} host.exp.Exponent`) && !calls.some((c) => c.includes("simctl boot")), calls.join(" | "));
         check("Expo Go missing: the address was not opened", !!f && !calls.some((c) => c.includes("openurl")), calls.join(" | "));   // what is said is the unit tests': the limiter here has no room left
         const c0 = calls.length;
         await presence.openInSimulator("alice", "demo", 8000);
@@ -196,6 +199,47 @@ export async function runSelftest(h: Hooks): Promise<void> {
         notes.length = 0;
       } finally {
         simulator.run = realRun;
+      }
+    }
+
+    // 4g. The iPhone panel, with Expo Go there: the press opens the address and then the panel beside Oerba's page, never Device Hub.
+    // serve-sim is a stand-in that starts nothing and says why, so the panel shows its bar and the reason, and no preview.
+    {
+      const panel = h.getPanel();
+      const win = h.getWin();
+      const oerba = h.getOerba();
+      const calls: string[] = [];
+      const realRun = simulator.run;
+      const SIM = "5E5E5E5E-0000-4000-8000-5E5E5E5E5E5E";
+      simulator.run = async (file, args) => {
+        calls.push([file, ...args].join(" "));
+        if (args.join(" ") === "simctl list devices --json") return { code: 0, stdout: JSON.stringify({ devices: { "com.apple.CoreSimulator.SimRuntime.iOS-26-5": [{ udid: SIM, isAvailable: true, deviceTypeIdentifier: "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro", state: "Booted", name: "iPhone 17 Pro" }] } }) };
+        return { code: 0, stdout: "" };
+      };
+      const realServer = panel?.server;
+      const started: string[] = [];
+      if (panel) panel.server = { running: null, alive: false, start: async (udid) => { started.push(udid); return { why: "a stand-in starts nothing" }; }, stop: async () => undefined };
+      try {
+        if (!panel || !win || !oerba) throw new Error("no panel, window or Oerba view");
+        const [W = 0] = win.getContentSize();
+        const before = oerba.getBounds().width;
+        await presence.openInSimulator("alice", "demo", 8081);
+        check("with Expo Go there, the address was opened and Device Hub was not", calls.includes(`/usr/bin/xcrun simctl openurl ${SIM} exp://127.0.0.1:${h.getRelay().list().find((x) => x.remote === 8081)?.local ?? 0}`) && !calls.some((c) => c.startsWith("/usr/bin/open ")), calls.join(" | "));
+        check("the panel opened for that device", panel.open && started.join() === SIM, started.join());
+        check("Oerba's page gave the panel its width, and no more", oerba.getBounds().width === W - panelWidth(W) && before === W, `${before} -> ${oerba.getBounds().width} of ${W}`);
+        const bar = await until("the panel's bar", () => webContents.getAllWebContents().find((w) => w.getURL() === h.policy.simbarUrl));
+        const said = await until("the bar's words", async () => { const t = String(await bar.executeJavaScript("document.getElementById('status').textContent")); return t.includes("stand-in") ? t : null; });
+        check("the bar says why the panel could not start, and offers Device Hub", said.includes("Pop out"), said);
+        check("no preview was made, and none may be loaded", h.policy.simOrigin === null && !webContents.getAllWebContents().some((w) => w.getURL().startsWith("http://127.0.0.1:3200")));
+        check("the bar has a bridge, and Oerba's page still has none", await bar.executeJavaScript("typeof window.oerbaSimbar === 'object'") === true && await oerba.webContents.executeJavaScript("typeof window.oerbaSimbar") === "undefined");
+        await bar.executeJavaScript("document.getElementById('close').click(); 1");
+        await until("the panel closed", () => !panel.open);
+        check("Close gave Oerba's page its width back", oerba.getBounds().width === W, String(oerba.getBounds().width));
+        await h.getRelay().stopAll();
+        notes.length = 0;
+      } finally {
+        simulator.run = realRun;
+        if (panel && realServer) panel.server = realServer;
       }
     }
 

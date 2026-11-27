@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { externalTarget, isSetupSender, isUpdateSender, navigationAllowed, openDecision, type NavPolicy, type Role } from "../src/policy/navigation";
 
-const policy: NavPolicy = { oerbaOrigin: "https://app.oerba.dev", setupUrl: "oerba-app://app/setup/setup.html", updateUrl: "oerba-app://app/update/update.html" };
+const policy: NavPolicy = { oerbaOrigin: "https://app.oerba.dev", setupUrl: "oerba-app://app/setup/setup.html", updateUrl: "oerba-app://app/update/update.html", simbarUrl: "oerba-app://app/simbar/simbar.html", simOrigin: null };
 const main = (url: string, role: Role = "oerba") => navigationAllowed(url, true, role, policy);
 const sub = (url: string, role: Role = "oerba") => navigationAllowed(url, false, role, policy);
 

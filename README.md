@@ -45,13 +45,16 @@ If the app still fetches its bundle from the workspace's long name or over `http
 
 1. Starts the forward of that port if it is not running, and uses the number it took.
 2. Checks that Xcode is installed (read only). If not, it says so: install Xcode from the App Store, open it once and let it install the iOS platform. Oerba installs nothing.
-3. Uses an iPhone simulator that is already booted, or boots the first iPhone of the newest iOS runtime, and shows it: in Device Hub on Xcode 27 (which replaced Simulator), or Simulator on Xcode 26 and earlier, each found by bundle id. If neither opens, the message says to open it yourself.
+3. Uses an iPhone simulator that is already booted, or boots the first iPhone of the newest iOS runtime.
 4. Checks that Expo Go is in that simulator. If not, it says so: Expo's page for Expo Go offers a build for the iOS Simulator. Oerba installs nothing into it.
 5. Opens `exp://127.0.0.1:<the number it took>` in Expo Go and says what it did.
+6. Shows the phone in a panel at the right of Oerba's window, beside the page, which keeps the rest of the width. Click to tap, drag to swipe, and type when a field has the focus; serve-sim's own buttons under the phone reload the app's bundle, press Home, take a screenshot, reach the phone's clipboard and turn it, and its side buttons are the phone's own. The bar above the phone has **Pop out**, which shows the same phone in Device Hub (Xcode 27, which replaced Simulator) or Simulator (Xcode 26 and earlier) and closes the panel, and **✕**, which closes it. If the panel cannot start, its bar says why, and Pop out still works.
 
 Start Expo in the workspace as usual (`npx expo start`); the project needs Expo SDK 58 or later, for the reason under *React Native and Expo* above.
 
-Booting a simulator is the only thing this changes on the Mac: it never erases, shuts down, creates or deletes one. Only the app's own menu starts it; no page can.
+**The panel** is Expo's [serve-sim](https://github.com/expo/serve-sim) 0.14.6, carried inside the app and run by it, on this Mac's loopback alone and behind a token only the panel holds. While the panel is open it hands the simulator a small library of its own, which every app started in that simulator loads, and takes it out again when the panel closes, the window closes or Oerba quits. Its clipboard reader, network capture and camera injection are off or left out. Its clipboard button installs a small helper app of serve-sim's into the simulator the first time it copies, to read the simulator's clipboard. Its screenshot button and its logs' Download save nothing (Oerba refuses every download), nor does its logs' Copy reach the Mac's clipboard; Device Hub's own screenshot does. If taps do nothing in the panel after Device Hub was open, Device Hub may have left the simulator's input switched to itself, which lasts until that simulator reboots: reboot it (in Device Hub, or `xcrun simctl shutdown <name>` and press Open in iOS Simulator again).
+
+Booting a simulator, the panel's library while it is open, and the clipboard's helper app are what this changes on the Mac: it never erases, shuts down, creates or deletes a simulator. Only the app's own menu starts it; no page can.
 
 **A web dev server** (Vite, Next, webpack) on 3000, 5173 or 8080: forward it and open `http://localhost:5173`. A page on one forward may call another forward of the same workspace (a frontend on `localhost:5173` and an API on `localhost:8000`, both started from the menu); a page from a port the app is not forwarding, or from another site, may not (see `SECURITY.md`). A server that checks the `Host` it sees (Vite's `server.allowedHosts`) sees the workspace's name, not `localhost`: allow it there. Your app's own cookies pass both ways once the workspace has set them (a `Domain` on one is removed so it lands on localhost); other programs' cookies on localhost, and On-Demand's own, are never sent on. A link to a forward from another website shows the relay's own "Opened from another site" page first, with a Continue link. **An app's own `Authorization: Bearer` cannot pass through On-Demand's proxy**, by the relay or by the browser's door at the workspace's name alike, because On-Demand reads a Bearer as its own credential: while a dev app is served this way it should use a cookie or another header. The relay drops `Authorization`.
 
@@ -113,7 +116,7 @@ A packaged app asks GitHub Releases for `latest-mac.yml` once the person is in, 
 - `src/policy/`: the shell's rules as small pure modules (navigation, permissions, external links), tested without Electron.
 - `src/setup/`: what the setup screen checks (`probes.ts`), how it reads `/api/who` (`who.ts`) and how the steps follow from it (`state.ts`).
 - `src/present/`: the menu bar, notifications and badge: reading `/api/now` (`now.ts`), what is worth a notification (`notify.ts`), the menu as data (`menu.ts`), routes (`routes.ts`), plain text (`text.ts`), and `presence.ts` wiring them to Electron.
-- `src/sim/`: opening a Metro port in the iOS Simulator: the decisions as pure functions (`decide.ts`) and the one-press-at-a-time runner of Xcode's tools (`run.ts`).
+- `src/sim/`: opening a Metro port in the iOS Simulator: the decisions as pure functions (`decide.ts`) and the one-press-at-a-time runner of Xcode's tools (`run.ts`); the iPhone panel's rules for serve-sim (`serve.ts`), the process that runs it (`server.ts`) and the panel's views (`panel.ts`), whose bar is `static/simbar.*`, `src/renderer/simbar.ts` and `src/preload-simbar.ts`. `scripts/stage-serve-sim.mjs` says which parts of serve-sim the packed app carries.
 - `src/relay/`: the localhost forwards: the rules as pure functions (`rules.ts`), one forward's listeners (`forward.ts`) and the running ones (`manager.ts`).
 - `src/update/`: when to check, the update state, release notes as plain text, and the window.
 - `src/shell/hardening.ts`: wires the policies to Electron. `src/main.ts`: the window. `src/preload-setup.ts`: the setup page's three calls.
@@ -121,9 +124,12 @@ A packaged app asks GitHub Releases for `latest-mac.yml` once the person is in, 
 
 ## Stages
 
-Stage 1 was the shell and the setup screen; stage 3 the menu bar item, notifications, dock badge and shortcuts; stage 4 packing, signing, notarising and updates that ask; stage 5 (this version, 0.4.0) a workspace's ports on the Mac's localhost. Later: every workspace's pages kept open side by side, reaching the computer (folders, and ports other than HTTP), and simulators. Each is its own stage.
+Stage 1 was the shell and the setup screen; stage 3 the menu bar item, notifications, dock badge and shortcuts; stage 4 packing, signing, notarising and updates that ask; stage 5 (0.4.0) a workspace's ports on the Mac's localhost; 0.4.2 opened an Expo app in the iOS Simulator, and 0.5.0 shows the phone beside Oerba's page. Later: every workspace's pages kept open side by side, reaching the computer (folders, and ports other than HTTP), a tab of Oerba's page for the phone on the same engine, and Flutter and Swift. Each is its own stage.
 
 ## Licence
 
 All rights reserved (`LICENSE`). The source is published so that anyone can read what the app does on their computer; it is
 not licensed for reuse. Oerba Labs' signed releases may be run as they are.
+
+The app carries others' code under their own licences, each with its licence file beside it in `Oerba.app/Contents/Resources/serve-sim`:
+Expo's serve-sim (Apache-2.0, with its `NOTICE`), ws (MIT), and the WebRTC framework serve-sim links (BSD-style, `LICENSE.webrtc`).
