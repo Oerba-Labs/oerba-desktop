@@ -138,22 +138,25 @@ export class DeviceMemory {
     return this.allowedSet.size;
   }
 
-  /** Every yes let go: each workspace is asked again before it next runs in the simulator. */
-  forgetAllowed(): void {
+  /** Every yes let go: each workspace is asked again before it next runs in the simulator. False when the file could not be
+      written, so the yes would come back at the next start: the caller says so. */
+  forgetAllowed(): boolean {
     this.load();
-    if (this.allowedSet.size === 0) return;
+    if (this.allowedSet.size === 0) return true;
     this.allowedSet.clear();
-    this.save();
+    return this.save();
   }
 
-  /** Writes the file whole, by rename; a write that fails is let go (see set). */
-  private save(): void {
-    if (!this.file || !this.map) return;
+  /** Writes the file whole, by rename; a write that fails is let go (see set), and says so: false. With no file (the self-test's
+      memory), there is nothing to write, and that is not a failure. */
+  private save(): boolean {
+    if (!this.file || !this.map) return true;
     try {
       mkdirSync(path.dirname(this.file), { recursive: true });
       const tmp = `${this.file}.${process.pid}.tmp`;
       writeFileSync(tmp, serialiseRemembered(this.map, this.panelDevice, this.allowedSet), { mode: 0o600 });
       renameSync(tmp, this.file);
-    } catch { /* kept in memory */ }
+      return true;
+    } catch { return false; /* kept in memory */ }
   }
 }

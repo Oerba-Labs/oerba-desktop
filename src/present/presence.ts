@@ -14,7 +14,8 @@ import { clean } from "./text";
 import { parseNow, type NowModel } from "./now";
 import type { RelayManager } from "../relay/manager";
 import { describe, expoHint, METRO_PORTS, pickerGroups, runtimeLabel } from "../sim/decide";
-import { listDevices, OnePress, openInSimulator, readyDevice, simulator } from "../sim/run";
+import { listDevices, OnePress, openInSimulator, quitExpoGo, readyDevice, simulator } from "../sim/run";
+import { upstreamName } from "../relay/rules";
 import type { DeviceMemory } from "../sim/remember";
 import type { PanelContext } from "../sim/panel";
 import { admitOffers, freshPortMemory, metroOffers, wsKey, type Offer, type PortsReader, type Reading } from "./ports";
@@ -286,6 +287,13 @@ export class Presence {
     // Without it (an app that has none), notifications say it, as before the panel.
     const panel = this.d.panel;
     await this.simPress.run(async () => {
+      // A name no forward takes is refused here, before the person is asked about a workspace that could not open anyway.
+      if (upstreamName(port, name, owner) === null) {
+        const why = `${name}'s ${port}: this workspace's name cannot be reached from here`;
+        if (panel?.isOpen()) panel.say(clean(`Could not open ${why}.`, 120));
+        else say("Could not open the port", why);
+        return;
+      }
       // Its code runs on this Mac there, as the person, and can read their files: asked once for each workspace, before any of it
       // starts, the forward included. Not now opens nothing and says nothing; the next press asks again.
       if (!this.d.memory.isAllowed(owner, name)) {
@@ -405,10 +413,23 @@ export class Presence {
     await this.toggleDevPanel();
   }
 
-  /** Every workspace's yes to run in the simulator let go (the menu's Forget item): each is asked again before it next opens there. */
-  forgetAllowed(): void {
-    this.d.memory.forgetAllowed();
+  /** Every workspace's yes to run in the simulator let go (the menu's Forget item): each is asked again before it next opens there.
+      What was let run is stopped with it: the panel closed (serve-sim with it) and Expo Go quit on each booted simulator, so no
+      app let run before goes on running and reloading. The forwards stay, as Open on localhost uses them; Stop in the menu ends
+      each. Waits for a press under way, so the stop is never dropped. */
+  async forgetAllowed(): Promise<void> {
+    const written = this.d.memory.forgetAllowed();
     this.render();
+    while (this.simPress.running) await new Promise((r) => setTimeout(r, 100));
+    await this.simPress.run(async () => {
+      if (this.d.panel?.isOpen()) await this.d.panel.close();
+      await quitExpoGo(simulator.run);
+    });
+    this.render();
+    if (!written) {
+      const item = { title: "Could not forget for good", body: "This app's devices.json could not be written: each workspace is asked again until it quits, and allowed again after.", route: "#/" };
+      for (const i of this.limiter.admit([item], Date.now())) sink.show(i, () => this.d.openRoute(i.route));
+    }
   }
 
   /** The relay's list changed (a forward started, stopped or ended with its workspace): the menu is drawn again. */
@@ -424,7 +445,7 @@ export class Presence {
     else if (a.type === "simulator") void this.openInSimulator(a.owner, a.name, a.port);
     else if (a.type === "device") void this.pickDevice(a.udid);
     else if (a.type === "dev-panel") void this.toggleDevPanel();
-    else if (a.type === "forget-allowed") this.forgetAllowed();
+    else if (a.type === "forget-allowed") void this.forgetAllowed();
     else if (a.type === "stop") void this.d.relay.stop(a.id).then(() => this.render());
     else if (a.type === "login") app.setLoginItemSettings({ openAtLogin: checked });   // only when the person ticks it
     else this.d.quit();

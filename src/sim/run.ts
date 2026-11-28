@@ -47,6 +47,20 @@ export async function listDevices(run: Runner): Promise<{ kind: "ok"; devices: D
   return { kind: "ok", devices: parseDevices(list.stdout) };
 }
 
+/** Forget's stop (0.6.3): Expo Go quit on each booted simulator, by `simctl terminate <udid> host.exp.Exponent`, so that no
+    workspace's code let run before goes on running and reloading. A device not running it is let be (simctl says so, and that is
+    ignored); nothing else is touched. Returns how many it quit. */
+export async function quitExpoGo(run: Runner): Promise<number> {
+  const listed = await listDevices(run);
+  if (listed.kind !== "ok") return 0;
+  let quit = 0;
+  for (const d of listed.devices) {
+    if (!d.booted || !isUdid(d.udid)) continue;
+    if ((await run(XCRUN, ["simctl", "terminate", d.udid, EXPO_GO], QUICK)).code === 0) quit++;
+  }
+  return quit;
+}
+
 /** The device to use, booted and ready: `udid` when this Mac still has it, otherwise one picked (pickDevice). Read-only until it
     boots a simulator that was shut down. The dev panel opened on its own uses this alone; a press goes on to open the app. */
 export async function readyDevice(run: Runner, udid: string | null): Promise<{ kind: "ready"; device: Device; booted: boolean } | { kind: "no-xcode" | "failed" | "no-iphone" | "boot-failed" }> {

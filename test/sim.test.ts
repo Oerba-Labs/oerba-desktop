@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { appLabel, describe, deviceHubUrl, EXPO_GO, expoHint, expoUrl, isPort, isUdid, iosVersion, MAX_PICKER, METRO_PORTS, parseDevices, pickDevice, pickerGroups, runtimeLabel } from "../src/sim/decide";
-import { listDevices, OnePress, openInSimulator, readyDevice, type Ran, type Runner } from "../src/sim/run";
+import { listDevices, OnePress, openInSimulator, quitExpoGo, readyDevice, type Ran, type Runner } from "../src/sim/run";
 import { buildMenu, labelsOf } from "../src/present/menu";
 import { parseNow } from "../src/present/now";
 
@@ -109,7 +109,7 @@ test("what the person is told for each outcome", () => {
 
 // ---- the sequence, against a stand-in runner that records what it was asked and boots nothing ---------------------------------
 
-interface Script { xcodeSelect?: number; find?: number; list?: unknown; listCode?: number; boot?: number; bootstatus?: number; container?: number; open?: number; hub?: number; openurl?: number }
+interface Script { xcodeSelect?: number; find?: number; list?: unknown; listCode?: number; boot?: number; bootstatus?: number; container?: number; open?: number; hub?: number; openurl?: number; terminate?: number }
 function standIn(s: Script): { run: Runner; calls: string[] } {
   const calls: string[] = [];
   const run: Runner = async (file, args, timeoutMs) => {
@@ -127,6 +127,7 @@ function standIn(s: Script): { run: Runner; calls: string[] } {
     if (a.startsWith("simctl bootstatus ")) return r(s.bootstatus ?? 0);
     if (a.startsWith("simctl get_app_container ")) return r(s.container ?? 0);
     if (a.startsWith("simctl openurl ")) return r(s.openurl ?? 0);
+    if (a.startsWith("simctl terminate ")) return r(s.terminate ?? 0);
     throw new Error(`unexpected command: ${line}`);
   };
   return { run, calls };
@@ -321,4 +322,18 @@ test("a device is made ready alone: the one asked for, booted if it must be, and
   assert.deepEqual(calls.slice(3), [`/usr/bin/xcrun simctl boot ${max}`, `/usr/bin/xcrun simctl bootstatus ${max}`]);
   assert.equal((await readyDevice(standIn({ boot: 1 }).run, null)).kind, "boot-failed");
   assert.equal((await readyDevice(standIn({ list: { devices: {} } }).run, null)).kind, "no-iphone");
+});
+
+test("Forget's stop quits Expo Go on each booted simulator, by its bundle id, and touches no other device or app", async () => {
+  const B1 = "3D9E8605-2D02-4516-AFB0-FEF1497E5EFF", B2 = "8240DE34-DD37-41F4-AC40-AEB85C31DB61";
+  const list = { devices: { "com.apple.CoreSimulator.SimRuntime.iOS-26-5": [dev(B1, "iPhone-17-Pro", "iPhone 17 Pro", "Booted"), dev(FIRST, "iPhone-18-Pro", "iPhone 18 Pro"), dev(B2, "iPad-Air", "iPad Air", "Booted"), dev("not-a-udid", "iPhone-17", "iPhone 17", "Booted")] } };
+  const { run, calls } = standIn({ list });
+  assert.equal(await quitExpoGo(run), 2);
+  assert.deepEqual(calls.filter((c) => c.includes(" terminate ")), [`/usr/bin/xcrun simctl terminate ${B1} ${EXPO_GO}`, `/usr/bin/xcrun simctl terminate ${B2} ${EXPO_GO}`]);
+  assert.ok(!calls.some((c) => / (boot|shutdown|erase|delete|uninstall|openurl) /.test(c)), calls.join(" | "));
+  const notRunning = standIn({ list, terminate: 1 });
+  assert.equal(await quitExpoGo(notRunning.run), 0, "a device not running Expo Go is let be");
+  const noXcode = standIn({ xcodeSelect: 1 });
+  assert.equal(await quitExpoGo(noXcode.run), 0);
+  assert.ok(!noXcode.calls.some((c) => c.includes("terminate")));
 });

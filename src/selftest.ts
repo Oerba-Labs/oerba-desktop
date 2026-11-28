@@ -366,8 +366,18 @@ export async function runSelftest(h: Hooks): Promise<void> {
           consentAsks[consentAsks.length - 1] === "carol/fresh" && calls.length === c9 && h.getRelay().list().length === forwards && !panel.open, `${consentAsks.join(" ")} | ${calls.slice(c9).join(" | ")}`);
         await presence.openInSimulator("carol", "fresh", 8081);
         check("  and the next press asks again", consentAsks.filter((k) => k === "carol/fresh").length === 2);
+        const c9b = calls.length;
+        const asks9b = consentAsks.length;
+        await presence.openInSimulator("alice@github", "demo", 8081);
+        check("a name no forward takes is refused before the person is asked, and nothing runs",
+          consentAsks.length === asks9b && calls.length === c9b && h.getRelay().list().length === forwards, `${consentAsks.join(" ")} | ${calls.slice(c9b).join(" | ")}`);
         consentAnswer = true;
-        presence.forgetAllowed();
+        await presence.openInSimulator("alice", "demo", 8081);
+        check("alice/demo, still allowed, opens without a question", panel.open && panel.context?.name === "demo" && consentAsks.length === asks9b);
+        const c10 = calls.length;
+        await presence.forgetAllowed();
+        check("Forget stops what was let run: the panel closed, and Expo Go quit on the booted simulator and no other",
+          !panel.open && calls.slice(c10).includes(`/usr/bin/xcrun simctl terminate ${SIM} host.exp.Exponent`) && !calls.slice(c10).some((c) => c.includes(`terminate ${SIM2}`)), calls.slice(c10).join(" | "));
         const askedBefore = consentAsks.length;
         await presence.openInSimulator("alice", "demo", 8081);
         check("Forget lets every yes go: alice/demo is asked again, and Open opens it", consentAsks.length === askedBefore + 1 && consentAsks[askedBefore] === "alice/demo" && panel.open && panel.context?.name === "demo", consentAsks.join(" "));

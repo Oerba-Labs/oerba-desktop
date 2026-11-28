@@ -102,3 +102,15 @@ test("at most MAX_REMEMBERED workspaces are allowed, the oldest yes going first"
   assert.equal(m.isAllowed("alice", `w${MAX_REMEMBERED}`), true);
   assert.equal(m.allowedCount(), MAX_REMEMBERED);
 });
+
+test("a Forget whose file cannot be written says so, rather than letting the yes come back at the next start unsaid", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "oerba-remember-"));
+  const blocker = path.join(dir, "not-a-folder");
+  writeFileSync(blocker, "x");
+  const m = new DeviceMemory(path.join(blocker, "devices.json"));
+  m.allow("alice", "demo");
+  assert.equal(m.isAllowed("alice", "demo"), true, "held in memory, though not written");
+  assert.equal(m.forgetAllowed(), false);
+  assert.equal(m.isAllowed("alice", "demo"), false, "and let go in memory at once");
+  assert.equal(new DeviceMemory(null).forgetAllowed(), true, "no file, nothing to fail");
+});
