@@ -454,7 +454,7 @@ export async function runSelftest(h: Hooks): Promise<void> {
       await until("the gate page", () => oerba.webContents.getURL() === `${h.policy.oerbaOrigin}/gate`);
       await sleep(1500);   // the frame inside the page tries window.open and window.top.location, three times each
       check("a frame inside Oerba's page opened nothing in the browser", opened.length === 0, opened.join(" "));
-      check("nor asked anything of the app by its own scheme", desktopAsks.length === 0 && (refusals.has("desktop:origin") || refusals.has("desktop:gesture")), refusals.list.slice(-8).join(" "));
+      check("nor asked anything of the app by its own scheme, though it took the focus first: it has not the key", desktopAsks.length === 0 && refusals.has("desktop:key"), refusals.list.slice(-8).join(" "));
       check("and its attempts were recorded as refused", refusals.has("linkout:origin") || refusals.has("navigate:main"), refusals.list.slice(-6).join(" "));
 
       const before2 = opened.length;
@@ -495,9 +495,10 @@ export async function runSelftest(h: Hooks): Promise<void> {
       // in the browser. A script's ask with no press, and an ask not of the shape, are refused.
       await click("devpanel");
       check("a press on Oerba's Dev Panel button asked the app, naming the workspace, and opened nothing in the browser", JSON.stringify(desktopAsks) === JSON.stringify([{ owner: "alice", name: "demo" }]) && opened.length === 2, JSON.stringify(desktopAsks));
+      check("Oerba's top frame was given the app's key when it loaded", await oerba.webContents.executeJavaScript("window.__key") === desktop.key);
       await sleep(2200);
-      await oerba.webContents.executeJavaScript("window.open('oerba-desktop:dev-panel')");
-      await oerba.webContents.executeJavaScript("window.open('oerba-desktop:dev-panel?workspace=..%2Fx')");
+      await oerba.webContents.executeJavaScript("window.open('oerba-desktop:dev-panel?key=' + window.__key)");
+      await oerba.webContents.executeJavaScript("window.open('oerba-desktop:dev-panel?workspace=..%2Fx&key=' + window.__key)");
       await sleep(300);
       check("an ask with no press, and one not of the shape, were refused", desktopAsks.length === 1 && refusals.has("desktop:gesture") && refusals.has("desktop:refused"), refusals.list.slice(-6).join(" "));
       check("Oerba's page sees the app's name in its User-Agent", /\bOerbaDesktop\/\d+\.\d+\.\d+\b/.test(String(await oerba.webContents.executeJavaScript("navigator.userAgent"))));

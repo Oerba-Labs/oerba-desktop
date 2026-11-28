@@ -53,6 +53,9 @@ export class SimPanel {
   private state: BarState = { device: "iPhone", app: "", status: "", loading: false };
   /** Whether serve-sim's page has loaded in the preview: until it has, the bar fills the column and says what is happening. */
   private previewReady = false;
+  /** Each load of the preview's, so that only the latest reveals it; and its ten seconds' timer. */
+  private loads = 0;
+  private revealTimer: NodeJS.Timeout | null = null;
 
   /** What the bar says now: its device's name, the workspace and app, and what the panel is doing or why it is not showing it. */
   get status(): BarState { return this.state; }
@@ -97,7 +100,7 @@ export class SimPanel {
     const idle = ctx ? "" : NO_APP;
     if (this.bar && this.preview && this.previewReady && this.server.alive && this.server.running?.udid === udid) { this.put({ device: name, status: idle, loading: false }); return; }
     // A preview of another device, or of a serve-sim no longer running, goes first: its origin is allowed no longer.
-    if (this.server.running?.udid !== udid) this.dropPreview();
+    if (this.server.running?.udid !== udid) { this.dropPreview(); this.layout(); }
     const refused = this.hooks.refuse();
     this.put({ device: name, status: refused ?? "Starting the panel…", loading: refused === null });
     this.openBar(win);
@@ -107,6 +110,7 @@ export class SimPanel {
     if (this.udid !== udid || !this.bar) { await this.server.stop(); return; }
     if ("why" in started) {
       this.dropPreview();
+      this.layout();
       this.put({ device: name, status: `Could not start: ${started.why}.`, loading: false });
       return;
     }
@@ -117,19 +121,33 @@ export class SimPanel {
       setRole(this.preview.webContents, "simulator");
       win.contentView.addChildView(this.preview);
     }
-    // Hidden until its page has loaded (or ten seconds have passed), the bar's loading state showing meanwhile.
+    // Hidden until its page has loaded (or ten seconds have passed), the bar's loading state showing meanwhile; a page that did not
+    // load stays hidden, and the bar says so. Only this load's events count: an earlier show's are let go.
     const preview = this.preview;
+    const load = ++this.loads;
     this.previewReady = false;
     this.layout();
     this.put({ device: name, status: "Loading the phone…", loading: true });
+    let failed = false;
+    const current = (): boolean => this.preview === preview && this.loads === load;
     const reveal = (): void => {
-      if (this.preview !== preview || this.previewReady) return;
+      if (!current() || failed || this.previewReady) return;
+      this.clearReveal();
       this.previewReady = true;
       this.layout();
       this.put({ device: name, status: idle, loading: false });
     };
+    const fail = (_e: unknown, code: number, _what: string, _url: string, mainFrame: boolean): void => {
+      if (!current() || !mainFrame || code === -3) return;   // -3: a load given up for another, which says nothing
+      failed = true;
+      this.clearReveal();
+      this.put({ device: name, status: "Could not load the phone's picture. Close the panel and open it again.", loading: false });
+    };
     preview.webContents.once("did-finish-load", reveal);
-    setTimeout(reveal, 10_000).unref?.();
+    preview.webContents.once("did-fail-load", fail);
+    this.clearReveal();
+    this.revealTimer = setTimeout(reveal, 10_000);
+    this.revealTimer.unref?.();
     void preview.webContents.loadURL(previewUrl(started.port, started.token)).catch(() => undefined);
   }
 
@@ -199,8 +217,14 @@ export class SimPanel {
     await this.server.stop();
   }
 
+  private clearReveal(): void {
+    if (this.revealTimer) clearTimeout(this.revealTimer);
+    this.revealTimer = null;
+  }
+
   /** The preview goes, and with it the origin it was allowed. */
   private dropPreview(): void {
+    this.clearReveal();
     this.policy.simOrigin = null;
     this.previewReady = false;
     const v = this.preview;

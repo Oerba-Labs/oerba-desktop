@@ -170,12 +170,15 @@ function showOerba(): void {
   presence?.setIn();
 }
 
-/** Tells Oerba's page whether the dev panel is open, so that its Dev Panel button shows it: one of two fixed scripts, run only in a
-    page of Oerba's own, which holds nothing the page or a workspace said. */
+/** Tells Oerba's page whether the dev panel is open, so that its Dev Panel button shows it, and the key its asks must carry: run
+    only in the top frame of a page of Oerba's own, where a workspace's frame cannot read it, and holding nothing the page or a
+    workspace said. */
 function tellPage(): void {
   const wc = oerbaView?.webContents;
-  if (!wc || wc.isDestroyed() || wc.isLoading() || !isOerbaPage(wc.mainFrame.url, policy)) return;
-  void wc.mainFrame.executeJavaScript(devPanelStateJs(panel?.open ?? false)).catch(() => undefined);
+  // Not held back while the page loads: a frame still loading would hold it back past the main frame's load, when it is first
+  // needed. The main frame can only be a page of Oerba's (src/policy/navigation.ts), and is asked again here.
+  if (!wc || wc.isDestroyed() || !isOerbaPage(wc.mainFrame.url, policy)) return;
+  void wc.mainFrame.executeJavaScript(devPanelStateJs(panel?.open ?? false, desktop.key)).catch(() => undefined);
 }
 
 function showWindow(): void {
