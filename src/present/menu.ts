@@ -14,6 +14,7 @@ export type Action =
   | { type: "forward"; owner: string; name: string; port: number }
   | { type: "simulator"; owner: string; name: string; port: number }
   | { type: "device"; udid: string }
+  | { type: "dev-panel" }
   | { type: "stop"; id: string }
   | { type: "login"; checked: boolean }
   | { type: "update" }
@@ -44,6 +45,8 @@ export interface MenuInput {
   /** The ports each workspace is listening on, as On-Demand last said (src/present/ports.ts), by wsKey. A workspace not in it
       (not read yet, or On-Demand not reached) is offered the usual ports, as before. */
   listening?: ReadonlyMap<string, readonly number[]>;
+  /** The dev panel, where this app has one: whether it is open. Absent, no Dev Panel item. */
+  devPanel?: { open: boolean };
 }
 
 const SEP: MenuItem = { label: "", kind: "separator" };
@@ -81,6 +84,8 @@ export function buildMenu(i: MenuInput): MenuItem[] {
       rows.push({ label: mine.length > 0 ? `${w.name} (localhost:${mine.map((f) => f.local).join(", ")})` : w.name, submenu: sub });
     }
     items.push(rows.length > 0 ? { label: "Workspaces", submenu: rows } : { label: "Workspaces", enabled: false });
+    // The dev panel on its own, with or without an app: ticked while it is open, and choosing it then closes it.
+    if (i.devPanel) items.push({ label: "Dev Panel", kind: "checkbox", checked: i.devPanel.open, action: { type: "dev-panel" } });
     if (i.now?.isOwner) items.push({ label: `Waiting on you (${i.now.needs.length})`, action: { type: "route", route: HOME } });
     items.push({ label: "New chat", action: { type: "route", route: CHAT } });
     items.push({ label: "Switch workspace…", action: { type: "palette" } });

@@ -166,6 +166,10 @@ export async function runSelftest(h: Hooks): Promise<void> {
     check("the badge follows", app.dock?.getBadge() === "2", String(app.dock?.getBadge()));
     await presence.refresh();
     check("reading the same answer again made none more", notes.length === 3);
+    // From here alice's workspace is running again, as it is when its app is opened: the presence's own cycle (every 400 ms) would
+    // otherwise stop its forwards between a press and a check, rightly, for a workspace that failed.
+    await fetch(`${h.policy.oerbaOrigin}/__now/running`, { method: "POST" });
+    await presence.refresh();
 
     // 4f. "Open in iOS Simulator": offered on Metro's ports and on no web port; a press starts the forward, runs the sequence at the
     // number the forward took and says what it did once; a second press while one runs is ignored. The runner is a recorder that
@@ -266,6 +270,29 @@ export async function runSelftest(h: Hooks): Promise<void> {
         await bar.executeJavaScript("document.getElementById('close').click(); 1");
         await until("the panel closed", () => !panel.open);
         check("Close gave Oerba's page its width back", oerba.getBounds().width === W, String(oerba.getBounds().width));
+        // The dev panel on its own (0.6.1): the menus' Dev Panel opens it on the device it last showed, with no app; the picker
+        // moves it with nothing opened; a press then opens the app on the device the panel shows; Dev Panel again closes it.
+        const devTick = (): boolean | undefined => presence.menu.find((m) => m.label === "Dev Panel")?.checked;
+        await until("the menu redrawn", () => devTick() === false);
+        check("the menu and the Dock menu have Dev Panel, unticked while the panel is closed", devTick() === false && presence.dockLabels().includes("Dev Panel"), presence.dockLabels().join(" | "));
+        const c3 = calls.length;
+        const s3 = started.length;
+        await presence.toggleDevPanel();
+        check("Dev Panel opened the panel on the device it last showed, with no app, and opened nothing in it", panel.open && panel.device === SIM2 && panel.context === null && started.slice(s3).join() === SIM2 && !calls.slice(c3).some((c) => c.includes(" openurl ") || c.includes(" get_app_container ")), `${started.slice(s3).join()} ${calls.slice(c3).join(" | ")}`);
+        check("and Dev Panel is ticked", devTick() === true);
+        // A new bar, loaded: the closed one may still be going away, with the same address, and would never run a script.
+        const bar2 = await until("the panel's bar again", () => webContents.getAllWebContents().find((w) => w.id !== bar.id && !w.isDestroyed() && !w.isLoading() && w.getURL() === h.policy.simbarUrl));
+        check("the bar names the device and no app", await bar2.executeJavaScript("document.getElementById('name').textContent + '|' + document.getElementById('app').textContent") === "iPhone 17|");
+        const items2 = await presence.deviceMenu();
+        check("the picker works with no app", (items2 ?? []).some((m) => m.checked === true && m.label.startsWith("iPhone 17")), (items2 ?? []).map((m) => `${m.label}${m.checked ? " (ticked)" : ""}`).join(" | "));
+        const c4 = calls.length;
+        await presence.pickDevice(SIM);
+        check("a device chosen with no app is shown, and nothing opened in it", panel.device === SIM && panel.context === null && !calls.slice(c4).some((c) => c.includes(" openurl ")), calls.slice(c4).join(" | "));
+        const c5 = calls.length;
+        await presence.openInSimulator("alice", "demo", 8081);
+        check("a press opens the app on the device the panel shows", calls.slice(c5).some((c) => opened(c, SIM)) && panel.context?.name === "demo", calls.slice(c5).join(" | "));
+        await presence.toggleDevPanel();
+        check("Dev Panel again closed the panel, and is unticked", !panel.open && devTick() === false && oerba.getBounds().width === W);
         await h.getRelay().stopAll();
         notes.length = 0;
       } finally {
@@ -275,7 +302,7 @@ export async function runSelftest(h: Hooks): Promise<void> {
     }
 
     // 4h. The ports a workspace listens on, from a stand-in for On-Demand: the menu offers those alone, and Metro starting earns one
-    // offer to open the app, never on the first read, on the device last used for it (4g left iPhone 17). The presence's own cycle
+    // offer to open the app, never on the first read, on the device last used for it (4g left iPhone 17 Pro). The presence's own cycle
     // reads too (every 400 ms here), so offers are counted, whichever read earned them. Offers have a budget of their own, so the
     // offer's notification is shown although the others' is full; clicked once Metro has stopped, it runs nothing.
     {
@@ -296,7 +323,7 @@ export async function runSelftest(h: Hooks): Promise<void> {
       await new Promise((r) => setTimeout(r, 500));
       check("Metro still listening earned none more", presence.offerCount === n0 + 1, String(presence.offerCount - n0));
       const offerNote = notes.slice(notes0).find((n) => n.title === "demo's app is running");
-      check("the offer was notified, naming the device last used for that workspace", offerNote?.body === "Open it on iPhone 17", notes.slice(notes0).map((n) => `${n.title}: ${n.body}`).join(" | "));
+      check("the offer was notified, naming the device last used for that workspace", offerNote?.body === "Open it on iPhone 17 Pro", notes.slice(notes0).map((n) => `${n.title}: ${n.body}`).join(" | "));
       const labels3 = presence.labels();
       check("the menu offers the ports the workspace listens on, and no other", labels3.includes("    Open on localhost:3000") && labels3.includes("    Open 8081 in iOS Simulator") && !labels3.includes("    Open on localhost:5173") && !labels3.includes("    Open 19000 in iOS Simulator"), labels3.join(" | "));
       listening = [3000];

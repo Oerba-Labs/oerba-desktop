@@ -34,7 +34,7 @@ app.whenReady().then(async () => {
   win.setAlwaysOnTop(true, "floating");
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   win.showInactive();
-  const panel = new SimPanel(policy, SAFE, { window: () => win, relayout: () => undefined, choose: () => undefined, refuse: () => null });
+  const panel = new SimPanel(policy, SAFE, { window: () => win, relayout: () => undefined, choose: () => undefined, changed: () => undefined, refuse: () => null });
   try {
     await checks(panel, policy);
   } catch (e) {

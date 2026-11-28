@@ -17,6 +17,10 @@ export const MAX_PORTS = 32;
 /** Databases' usual ports (MySQL, Postgres, Redis, MongoDB): the forwards carry HTTP and websockets alone, so these are not offered. */
 export const NOT_HTTP: readonly number[] = [3306, 5432, 6379, 27017];
 
+/** Linux's default range for ports a program is given rather than asks for (`ip_local_port_range`): where the workspace's own
+    tools listen (OpenCode's server, the editor's helpers), and not a dev server's usual choice. Not offered. */
+export const TOOL_PORTS = { from: 32768, to: 60999 } as const;
+
 /** The address of a workspace's own record, or null for a name not of On-Demand's shape (the forwards' own check). */
 export function workspaceUrl(api: string, owner: string, name: string): string | null {
   if (upstreamName(8081, name, owner) === null) return null;
@@ -40,8 +44,8 @@ export function agentId(body: Record<string, unknown> | null): string | null {
   return null;
 }
 
-/** The TCP ports of On-Demand's answer that a forward could dial (1024 to 65535) and carry (not a database's), each once, in order;
-    null for an answer that is not the shape. */
+/** The TCP ports of On-Demand's answer that a forward could dial (1024 to 65535) and carry (not a database's), and that are not a
+    tool's (TOOL_PORTS), each once, in order; null for an answer that is not the shape. */
 export function parsePorts(body: Record<string, unknown> | null): number[] | null {
   const list = body?.["ports"];
   if (!Array.isArray(list)) return null;
@@ -49,7 +53,7 @@ export function parsePorts(body: Record<string, unknown> | null): number[] | nul
   for (const p of list) {
     const o = typeof p === "object" && p !== null ? (p as Record<string, unknown>) : null;
     const n = o?.["port"];
-    if (o?.["network"] !== "tcp" || typeof n !== "number" || !Number.isInteger(n) || n < 1024 || n > 65535 || NOT_HTTP.includes(n)) continue;
+    if (o?.["network"] !== "tcp" || typeof n !== "number" || !Number.isInteger(n) || n < 1024 || n > 65535 || NOT_HTTP.includes(n) || (n >= TOOL_PORTS.from && n <= TOOL_PORTS.to)) continue;
     out.add(n);
   }
   return [...out].sort((a, b) => a - b).slice(0, MAX_PORTS);

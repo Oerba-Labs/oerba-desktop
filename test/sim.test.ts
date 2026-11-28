@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { appLabel, describe, deviceHubUrl, EXPO_GO, expoHint, expoUrl, isPort, isUdid, iosVersion, MAX_PICKER, METRO_PORTS, parseDevices, pickDevice, pickerGroups, runtimeLabel } from "../src/sim/decide";
-import { listDevices, OnePress, openInSimulator, type Ran, type Runner } from "../src/sim/run";
+import { listDevices, OnePress, openInSimulator, readyDevice, type Ran, type Runner } from "../src/sim/run";
 import { buildMenu, labelsOf } from "../src/present/menu";
 import { parseNow } from "../src/present/now";
 
@@ -310,4 +310,15 @@ test("the sequence on a chosen device boots that one and opens the address there
   assert.deepEqual(o, { kind: "opened", udid: max, name: "iPhone 18 Pro Max", booted: true, port: 8081, shown: true });
   assert.ok(calls.includes(`/usr/bin/xcrun simctl boot ${max}`) && calls.includes(`/usr/bin/xcrun simctl openurl ${max} exp://127.0.0.1:8081`), calls.join("\n"));
   assert.ok(!calls.some((c) => c.startsWith("/usr/bin/open ")), "the panel shows it: Device Hub is not opened");
+});
+
+test("a device is made ready alone: the one asked for, booted if it must be, and no app opened", async () => {
+  const max = "1ABFBD1E-2DB7-4466-827C-5D6B2FC49AC9";
+  const { run, calls } = standIn({});
+  const r = await readyDevice(run, max);
+  assert.equal(r.kind, "ready");
+  assert.equal(r.kind === "ready" && r.device.udid, max);
+  assert.deepEqual(calls.slice(3), [`/usr/bin/xcrun simctl boot ${max}`, `/usr/bin/xcrun simctl bootstatus ${max}`]);
+  assert.equal((await readyDevice(standIn({ boot: 1 }).run, null)).kind, "boot-failed");
+  assert.equal((await readyDevice(standIn({ list: { devices: {} } }).run, null)).kind, "no-iphone");
 });

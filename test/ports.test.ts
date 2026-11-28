@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { admitOffers, agentId, freshPortMemory, MAX_PORTS, metroOffers, OFFER_COOLDOWN_MS, ONDEMAND_API, onDemandPorts, parsePorts, workspaceUrl, type Reading } from "../src/present/ports";
+import { admitOffers, agentId, freshPortMemory, MAX_PORTS, metroOffers, OFFER_COOLDOWN_MS, TOOL_PORTS, ONDEMAND_API, onDemandPorts, parsePorts, workspaceUrl, type Reading } from "../src/present/ports";
 import type { PresentFetch } from "../src/present/fetch";
 import { buildMenu, labelsOf } from "../src/present/menu";
 import type { NowModel } from "../src/present/now";
@@ -93,4 +93,10 @@ test("an offer is made once a workspace in five minutes, whatever its code does 
   assert.ok(!last.has("alice/web") || last.get("alice/web") === 0);
   admitOffers([], last, 3 * OFFER_COOLDOWN_MS);
   assert.equal(last.size, 0, "old entries are let go");
+});
+
+test("a port in the range Linux hands to programs, where the workspace's tools listen, is not offered", () => {
+  const body = { ports: [47784, 49374, 32767, 32768, 60999, 61000, 8081].map((port) => ({ port, network: "tcp" })) };
+  assert.deepEqual(parsePorts(body), [8081, 32767, 61000]);
+  assert.deepEqual(TOOL_PORTS, { from: 32768, to: 60999 });
 });

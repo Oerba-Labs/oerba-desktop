@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { DeviceMemory, MAX_REMEMBERED, parseRemembered, serialiseRemembered, workspaceKey } from "../src/sim/remember";
+import { DeviceMemory, MAX_REMEMBERED, parsePanelDevice, parseRemembered, serialiseRemembered, workspaceKey } from "../src/sim/remember";
 
 const A = "265CBECB-2CF9-4E96-A149-C2CAEFC1AE27";
 const B = "1ABFBD1E-2DB7-4466-827C-5D6B2FC49AC9";
@@ -54,4 +54,20 @@ test("a file that cannot be read or written leaves the memory in this run alone"
   const blocked = new DeviceMemory(path.join(file, "cannot", "be", "here.json"));
   blocked.set("alice", "demo", { udid: A, name: "iPhone" });
   assert.deepEqual(blocked.get("alice", "demo"), { udid: A, name: "iPhone" });
+});
+
+test("the device the dev panel last showed is kept beside the workspaces', held to the same shape", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "oerba-remember-"));
+  const file = path.join(dir, "devices.json");
+  const m = new DeviceMemory(file);
+  assert.equal(m.getPanel(), null);
+  m.set("alice", "demo", { udid: A, name: "iPhone 17 Pro" });
+  m.setPanel({ udid: B, name: "iPhone 18 Pro Max" });
+  m.setPanel({ udid: "booted", name: "x" });
+  m.setPanel({ udid: A, name: "bad\nname" });
+  const again = new DeviceMemory(file);
+  assert.deepEqual(again.getPanel(), { udid: B, name: "iPhone 18 Pro Max" });
+  assert.deepEqual(again.get("alice", "demo"), { udid: A, name: "iPhone 17 Pro" }, "the workspaces are kept with it");
+  for (const junk of ["", "{}", '{"panel":null}', '{"panel":{"udid":"x","name":"n"}}', `{"panel":{"udid":"${A}","name":""}}`]) assert.equal(parsePanelDevice(junk), null, junk);
+  assert.ok(!serialiseRemembered(new Map()).includes("panel"), "no panel device, no entry");
 });

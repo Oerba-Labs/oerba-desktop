@@ -240,7 +240,7 @@ app.whenReady().then(() => {
   serveBundled(__dirname);
   installHardening(policy);
   panel = new SimPanel(policy, SAFE, {
-    window: () => win, relayout, choose: () => { void presence?.chooseDevice(); },
+    window: () => win, relayout, choose: () => { void presence?.chooseDevice(); }, changed: () => { presence?.redraw(); },
     refuse: () => (app.isPackaged && !app.isInApplicationsFolder() ? "Move Oerba to Applications, open it from there, and press Open in iOS Simulator again." : null),
   });
   // Which device each workspace was last opened on: a file of the app's own, or, for the self-test, one in a scratch folder, so
@@ -249,10 +249,12 @@ app.whenReady().then(() => {
   if (__SELFTEST__ && scratch) app.on("will-quit", () => { rmSync(scratch, { recursive: true, force: true }); });
   const memory = new DeviceMemory(path.join(scratch ?? app.getPath("userData"), "devices.json"));
   const devPanel = {
-    show: (udid: string, name: string, ctx: { owner: string; name: string; remote: number }) => { showWindow(); return panel ? panel.show(udid, name, ctx) : Promise.resolve(); },
+    show: (udid: string, name: string, ctx: { owner: string; name: string; remote: number } | null) => { showWindow(); return panel ? panel.show(udid, name, ctx) : Promise.resolve(); },
+    close: () => panel?.close() ?? Promise.resolve(),
+    isOpen: () => panel?.open ?? false,
     say: (status: string) => panel?.say({ status }),
     context: () => panel?.context ?? null,
-    device: () => panel?.device ?? null,
+    device: () => (panel?.device ? { udid: panel.device, name: panel.status.device } : null),
     popup: (menu: Electron.Menu) => panel?.popup(menu),
   };
   presence = new Presence({ oerbaOrigin: config.oerbaOrigin, fetchFn: presentFetch, intervalMs: config.presentMs, windowShown: () => !!win && win.isVisible() && !win.isMinimized(), show: showWindow, openRoute, palette: openPalette, openUpdate: () => updateWindow?.show(), restartForUpdate, onIn: () => updater.start(), quit: () => app.quit(), relay, openLocal: (u) => external.open(u), panel: devPanel, memory, ports: config.selftest ? null : onDemandPorts(presentFetch) });

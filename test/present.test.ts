@@ -197,3 +197,12 @@ test("the palette's opening is a fixed string, with nothing woven into it", () =
   assert.equal(OPEN_PALETTE_JS.includes("${"), false);
   assert.match(OPEN_PALETTE_JS, /^document\.dispatchEvent\(new KeyboardEvent\("keydown", \{ key: "k", metaKey: true, bubbles: true, cancelable: true \}\)\)$/);
 });
+
+test("the menu has Dev Panel where the app has the panel, ticked while it is open, and none where it has not", () => {
+  const base = { inOerba: true, now: null, loginItem: false, paletteKey: true, chatKey: true, update: null };
+  const find = (open: boolean | null) => buildMenu({ ...base, ...(open === null ? {} : { devPanel: { open } }) }).find((m) => m.label === "Dev Panel");
+  assert.deepEqual(find(false), { label: "Dev Panel", kind: "checkbox", checked: false, action: { type: "dev-panel" } });
+  assert.equal(find(true)?.checked, true);
+  assert.equal(find(null), undefined);
+  assert.equal(buildMenu({ ...base, inOerba: false, devPanel: { open: false } }).find((m) => m.label === "Dev Panel"), undefined, "not before the person is in");
+});

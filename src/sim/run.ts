@@ -47,31 +47,39 @@ export async function listDevices(run: Runner): Promise<{ kind: "ok"; devices: D
   return { kind: "ok", devices: parseDevices(list.stdout) };
 }
 
+/** The device to use, booted and ready: `udid` when this Mac still has it, otherwise one picked (pickDevice). Read-only until it
+    boots a simulator that was shut down. The dev panel opened on its own uses this alone; a press goes on to open the app. */
+export async function readyDevice(run: Runner, udid: string | null): Promise<{ kind: "ready"; device: Device; booted: boolean } | { kind: "no-xcode" | "failed" | "no-iphone" | "boot-failed" }> {
+  const listed = await listDevices(run);
+  if (listed.kind !== "ok") return { kind: listed.kind };
+  const pick = pickDevice(listed.devices, udid);
+  if (pick.kind === "none") return { kind: "no-iphone" };
+  if (!isUdid(pick.device.udid)) return { kind: "failed" };
+  if (pick.kind === "boot") {
+    if ((await run(XCRUN, ["simctl", "boot", pick.device.udid], QUICK)).code !== 0) return { kind: "boot-failed" };
+    // Boots asynchronously: wait until it is up (this reads, it changes nothing), or the address would meet a device not ready for it.
+    if ((await run(XCRUN, ["simctl", "bootstatus", pick.device.udid], BOOT)).code !== 0) return { kind: "boot-failed" };
+  }
+  return { kind: "ready", device: pick.device, booted: pick.kind === "boot" };
+}
+
 /** The whole sequence for a forward that took `port` here. Read-only until it boots a simulator. With `window` false the device is
     not shown in Device Hub: the dev panel shows it instead, once the sequence has opened the address. `udid` is the device to
-    use when it is still on this Mac (one the dev panel listed, or the one last used for this workspace); otherwise one is picked. */
+    use when it is still on this Mac (one the dev panel listed or shows, or the one last used for this workspace); otherwise one is
+    picked. */
 export async function openInSimulator(port: number, run: Runner, opts: { window: boolean; udid?: string | null } = { window: true }): Promise<Outcome> {
   const url = expoUrl(port);
   if (url === null) return { kind: "failed" };
 
-  const listed = await listDevices(run);
-  if (listed.kind !== "ok") return { kind: listed.kind };
-  const pick = pickDevice(listed.devices, opts.udid ?? null);
-  if (pick.kind === "none") return { kind: "no-iphone" };
-  const { udid, name } = pick.device;
-  if (!isUdid(udid)) return { kind: "failed" };
-
-  if (pick.kind === "boot") {
-    if ((await run(XCRUN, ["simctl", "boot", udid], QUICK)).code !== 0) return { kind: "boot-failed" };
-    // Boots asynchronously: wait until it is up (this reads, it changes nothing), or the address would meet a device not ready for it.
-    if ((await run(XCRUN, ["simctl", "bootstatus", udid], BOOT)).code !== 0) return { kind: "boot-failed" };
-  }
+  const ready = await readyDevice(run, opts.udid ?? null);
+  if (ready.kind !== "ready") return { kind: ready.kind };
+  const { udid, name } = ready.device;
   // If the window does not open, that does not stop the address being opened, and is said at the end.
   const shown = opts.window ? await showDevice(udid, run) : true;
 
   if ((await run(XCRUN, ["simctl", "get_app_container", udid, EXPO_GO], QUICK)).code !== 0) return { kind: "no-expo-go", name };
   if ((await run(XCRUN, ["simctl", "openurl", udid, url], QUICK)).code !== 0) return { kind: "open-failed", name };
-  return { kind: "opened", udid, name, booted: pick.kind === "boot", port, shown };
+  return { kind: "opened", udid, name, booted: ready.booted, port, shown };
 }
 
 /** One press at a time: a press while another runs is ignored (false). */

@@ -14,19 +14,23 @@ import { clean } from "./text";
 import { parseNow, type NowModel } from "./now";
 import type { RelayManager } from "../relay/manager";
 import { describe, expoHint, METRO_PORTS, pickerGroups, runtimeLabel } from "../sim/decide";
-import { listDevices, OnePress, openInSimulator, simulator } from "../sim/run";
+import { listDevices, OnePress, openInSimulator, readyDevice, simulator } from "../sim/run";
 import type { DeviceMemory } from "../sim/remember";
 import type { PanelContext } from "../sim/panel";
 import { admitOffers, freshPortMemory, metroOffers, wsKey, type Offer, type PortsReader, type Reading } from "./ports";
 
 /** What the presence asks of the dev panel (src/sim/panel.ts). */
 export interface PanelDeps {
-  /** Shows the panel for a device and a workspace's app, the window with it. */
-  show(udid: string, name: string, ctx: PanelContext): Promise<void>;
+  /** Shows the panel for a device and a workspace's app, or no app (null), the window with it. */
+  show(udid: string, name: string, ctx: PanelContext | null): Promise<void>;
+  close(): Promise<void>;
+  isOpen(): boolean;
   /** Says in the bar what is happening, or why not; nothing while the panel is closed. */
   say(status: string): void;
+  /** The workspace and port it shows; null with no app, or closed. */
   context(): PanelContext | null;
-  device(): string | null;
+  /** The device it shows, while it is open. */
+  device(): { udid: string; name: string } | null;
   /** Pops the device picker under the bar's device button. */
   popup(menu: Menu): void;
 }
@@ -192,7 +196,7 @@ export class Presence {
     if (offers.length > 0) this.lastOffer = offers[offers.length - 1] ?? null;
     const clicks = new Map<Item, () => void>();
     const items = offers.map((o) => {
-      const device = this.d.memory.get(o.owner, o.name)?.name ?? "the iPhone simulator";
+      const device = this.d.panel?.device()?.name ?? this.d.memory.get(o.owner, o.name)?.name ?? "the iPhone simulator";
       const item: Item = { title: clean(`${o.name}'s app is running`, 60), body: clean(`Open it on ${device}`, 120), route: workspaceRoute(o.owner, o.name) ?? "#/" };
       clicks.set(item, () => { void this.takeOffer(o); });
       return item;
@@ -212,11 +216,11 @@ export class Presence {
   }
 
   private render(): void {
-    this.menu = buildMenu({ inOerba: this.inOerba, now: this.now, loginItem: app.getLoginItemSettings().openAtLogin, paletteKey: this.keys.palette, chatKey: this.keys.chat, update: this.update, forwards: this.d.relay.list(), listening: this.listening });
+    this.menu = buildMenu({ inOerba: this.inOerba, now: this.now, loginItem: app.getLoginItemSettings().openAtLogin, paletteKey: this.keys.palette, chatKey: this.keys.chat, update: this.update, forwards: this.d.relay.list(), listening: this.listening, devPanel: this.d.panel ? { open: this.d.panel.isOpen() } : undefined });
     this.tray?.setContextMenu(Menu.buildFromTemplate(this.menu.map((m) => this.toNative(m))));
     // The Dock icon carries the same pieces of the same menu (so a notch cannot hide them): open, workspaces with their forwards, new chat.
     // The Dock has its own Quit.
-    const dockLabels = new Set(["Open Oerba", "Workspaces", "New chat"]);
+    const dockLabels = new Set(["Open Oerba", "Workspaces", "Dev Panel", "New chat"]);
     this.dockMenu = this.menu.filter((m) => dockLabels.has(m.label));
     app.dock?.setMenu(Menu.buildFromTemplate(this.dockMenu.map((m) => this.toNative(m))));
   }
@@ -279,11 +283,13 @@ export class Presence {
       this.render();
       if ("why" in f) { say("Could not open the port", `${name}'s ${port}: ${f.why}`); if (picked) this.d.panel?.say("Could not open the port."); return; }
       const panelled = this.d.panel !== undefined;
-      const preferred = udid ?? this.d.memory.get(owner, name)?.udid ?? null;
+      // The device asked for; else the one the panel shows, where the app is looked at; else the one last used for this workspace.
+      const preferred = udid ?? this.d.panel?.device()?.udid ?? this.d.memory.get(owner, name)?.udid ?? null;
       const outcome = await openInSimulator(f.info.local, simulator.run, { window: !panelled, udid: preferred });
       if (outcome.kind === "opened") {
-        this.d.memory.set(owner, name, { udid: outcome.udid, name: clean(outcome.name, 60) || "iPhone" });
-        if (this.d.panel) await this.d.panel.show(outcome.udid, outcome.name, { owner, name, remote: port });
+        const seen = { udid: outcome.udid, name: clean(outcome.name, 60) || "iPhone" };
+        this.d.memory.set(owner, name, seen);
+        if (this.d.panel) { this.d.memory.setPanel(seen); await this.d.panel.show(outcome.udid, seen.name, { owner, name, remote: port }); }
       }
       const words = describe(outcome);
       if (picked && outcome.kind !== "opened") this.d.panel?.say(`${words.title}.`);
@@ -300,10 +306,10 @@ export class Presence {
       page), the running ones first and the one shown ticked. Null while the panel is closed, or when Xcode could not be asked,
       which the bar then says. */
   async deviceMenu(): Promise<MenuItem[] | null> {
-    if (!this.d.panel?.context()) return null;
+    if (!this.d.panel?.isOpen()) return null;
     const listed = await listDevices(simulator.run);
     if (listed.kind !== "ok") { this.d.panel.say(`${describe({ kind: listed.kind }).title}.`); return null; }
-    const current = this.d.panel.device()?.toUpperCase() ?? null;
+    const current = this.d.panel.device()?.udid.toUpperCase() ?? null;
     this.choices = new Map(listed.devices.map((d) => [d.udid.toUpperCase(), clean(d.name, 60) || "Simulator"]));
     const items: MenuItem[] = [];
     for (const g of pickerGroups(listed.devices)) {
@@ -327,9 +333,40 @@ export class Presence {
 
   /** A device chosen in the picker: one the last picker listed, for the workspace and app the panel shows, or nothing. */
   async pickDevice(udid: string): Promise<void> {
-    const ctx = this.d.panel?.context();
-    if (!ctx || !this.choices.has(udid.toUpperCase())) return;
-    await this.openInSimulator(ctx.owner, ctx.name, ctx.remote, udid);
+    const panel = this.d.panel;
+    if (!panel?.isOpen() || !this.choices.has(udid.toUpperCase())) return;
+    const ctx = panel.context();
+    if (ctx) { await this.openInSimulator(ctx.owner, ctx.name, ctx.remote, udid); return; }
+    // No app in the panel: the device alone, booted if it must be, and shown.
+    await this.simPress.run(async () => {
+      panel.say(`Opening ${this.choices.get(udid.toUpperCase()) ?? "that device"}…`);
+      const r = await readyDevice(simulator.run, udid);
+      if (r.kind !== "ready") { panel.say(`${describe({ kind: r.kind }).title}.`); return; }
+      if (r.device.udid.toUpperCase() !== udid.toUpperCase()) { panel.say("That device is no longer on this Mac."); return; }
+      const seen = { udid: r.device.udid, name: clean(r.device.name, 60) || "Simulator" };
+      this.d.memory.setPanel(seen);
+      await panel.show(seen.udid, seen.name, null);
+    });
+  }
+
+  /** The menus' Dev Panel: closes the panel while it is open; otherwise opens it on its own, on the device it last showed if this
+      Mac still has it, else a booted iPhone, else the first iPhone of the newest runtime, booted (readyDevice). It opens no app. */
+  async toggleDevPanel(): Promise<void> {
+    const panel = this.d.panel;
+    if (!panel) return;
+    if (panel.isOpen()) { await panel.close(); this.render(); return; }
+    await this.simPress.run(async () => {
+      const r = await readyDevice(simulator.run, this.d.memory.getPanel()?.udid ?? null);
+      if (r.kind !== "ready") {
+        const words = describe({ kind: r.kind });
+        for (const item of this.limiter.admit([{ title: clean(words.title, 60), body: clean(words.body, 200), route: "#/" }], Date.now())) sink.show(item, () => this.d.openRoute(item.route));
+        return;
+      }
+      const seen = { udid: r.device.udid, name: clean(r.device.name, 60) || "iPhone" };
+      this.d.memory.setPanel(seen);
+      await panel.show(seen.udid, seen.name, null);
+    });
+    this.render();
   }
 
   /** The relay's list changed (a forward started, stopped or ended with its workspace): the menu is drawn again. */
@@ -344,6 +381,7 @@ export class Presence {
     else if (a.type === "forward") void this.startForward(a.owner, a.name, a.port);
     else if (a.type === "simulator") void this.openInSimulator(a.owner, a.name, a.port);
     else if (a.type === "device") void this.pickDevice(a.udid);
+    else if (a.type === "dev-panel") void this.toggleDevPanel();
     else if (a.type === "stop") void this.d.relay.stop(a.id).then(() => this.render());
     else if (a.type === "login") app.setLoginItemSettings({ openAtLogin: checked });   // only when the person ticks it
     else this.d.quit();

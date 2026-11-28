@@ -28,6 +28,8 @@ export interface PanelHooks {
   relayout(): void;
   /** The bar's device button was pressed: the device picker is made (from simctl's own list, in the main process) and popped. */
   choose(): void;
+  /** The panel opened or closed: the menus' Dev Panel item follows. */
+  changed(): void;
   /** Why the panel may not start here, or null. A packed app outside Applications (run from its disk image, or moved by macOS to
       a random place) is refused: serve-sim names a library inside the app to the simulator, and a path that does not last could
       later hold something else, were serve-sim to stop without taking it out. */
@@ -39,6 +41,9 @@ export interface PanelContext { owner: string; name: string; remote: number }
 
 export interface BarState { device: string; app: string; status: string }
 
+/** What the bar says while the panel shows a device and no app (it was opened on its own, from the menus' Dev Panel). */
+export const NO_APP = "Start Metro in a workspace to open its app here";
+
 export class SimPanel {
   private bar: WebContentsView | null = null;
   private preview: WebContentsView | null = null;
@@ -48,7 +53,7 @@ export class SimPanel {
 
   /** What the bar says now: its device's name, the workspace and app, and what the panel is doing or why it is not showing it. */
   get status(): BarState { return this.state; }
-  /** The workspace and port the panel shows, while it is open. */
+  /** The workspace and port the panel shows, while it is open with an app; null with none, or closed. */
   get context(): PanelContext | null { return this.ctx; }
   /** The device it shows, while it is open. */
   get device(): string | null { return this.udid; }
@@ -79,13 +84,16 @@ export class SimPanel {
   /** The width the panel takes from the window now: none while it is closed. */
   width(windowWidth: number): number { return this.open ? panelWidth(windowWidth) : 0; }
 
-  /** Shows the panel for this device and this workspace's app, and starts serve-sim for it; a panel already open for another
-      device moves to this one. */
-  async show(udid: string, name: string, ctx: PanelContext): Promise<void> {
+  /** Shows the panel for this device and this workspace's app (none, opened on its own), and starts serve-sim for it; a panel
+      already open for another device moves to this one, and one already showing this device keeps its serve-sim and preview. */
+  async show(udid: string, name: string, ctx: PanelContext | null): Promise<void> {
     const win = this.hooks.window();
     if (!win) return;
+    const wasOpen = this.bar !== null;
     this.udid = udid;
     this.ctx = ctx;
+    const idle = ctx ? "" : NO_APP;
+    if (this.bar && this.preview && this.server.alive && this.server.running?.udid === udid) { this.put({ device: name, status: idle }); return; }
     // A preview of another device, or of a serve-sim no longer running, goes first: its origin is allowed no longer.
     if (this.server.running?.udid !== udid) this.dropPreview();
     const refused = this.hooks.refuse();
@@ -98,6 +106,7 @@ export class SimPanel {
     }
     this.layout();
     this.hooks.relayout();
+    if (!wasOpen) this.hooks.changed();
     if (refused !== null) return;
     const started = await this.server.start(udid);
     // Closed while it started: whatever started is stopped, so that nothing runs, or stays armed in the simulator, without a panel.
@@ -116,7 +125,7 @@ export class SimPanel {
     }
     this.layout();
     void this.preview.webContents.loadURL(previewUrl(started.port, started.token));
-    this.put({ device: name, status: "" });
+    this.put({ device: name, status: idle });
   }
 
   /** Lays the bar and the preview out in the right-hand column of the window. */
@@ -156,6 +165,7 @@ export class SimPanel {
       if (!bar.webContents.isDestroyed()) bar.webContents.close();
     }
     this.hooks.relayout();
+    if (bar) this.hooks.changed();
     await this.server.stop();
   }
 
