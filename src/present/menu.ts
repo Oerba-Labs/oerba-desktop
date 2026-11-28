@@ -5,6 +5,7 @@ import { CHAT, HOME, workspaceRoute } from "./routes";
 import { COMMON_PORTS, type ForwardInfo } from "../relay/manager";
 import { upstreamName } from "../relay/rules";
 import { METRO_PORTS } from "../sim/decide";
+import { wsKey } from "./ports";
 
 export type Action =
   | { type: "open" }
@@ -12,6 +13,7 @@ export type Action =
   | { type: "palette" }
   | { type: "forward"; owner: string; name: string; port: number }
   | { type: "simulator"; owner: string; name: string; port: number }
+  | { type: "device"; udid: string }
   | { type: "stop"; id: string }
   | { type: "login"; checked: boolean }
   | { type: "update" }
@@ -39,10 +41,15 @@ export interface MenuInput {
   update: { version: string; ready: boolean } | null;
   /** The localhost forwards running now (src/relay/), shown under their workspaces. */
   forwards?: ForwardInfo[];
+  /** The ports each workspace is listening on, as On-Demand last said (src/present/ports.ts), by wsKey. A workspace not in it
+      (not read yet, or On-Demand not reached) is offered the usual ports, as before. */
+  listening?: ReadonlyMap<string, readonly number[]>;
 }
 
 const SEP: MenuItem = { label: "", kind: "separator" };
 const MAX_LISTED = 15;
+/** The most listening ports offered for one workspace. */
+const MAX_PORT_ITEMS = 12;
 const STARTED = /^(running|starting|pending)$/;
 
 export function buildMenu(i: MenuInput): MenuItem[] {
@@ -61,12 +68,14 @@ export function buildMenu(i: MenuInput): MenuItem[] {
       const mine = (i.forwards ?? []).filter((f) => f.owner === w.owner && f.name === w.name);
       const sub: MenuItem[] = [{ label: "Open in Oerba", action: { type: "route", route } }];
       const running = new Set(mine.map((f) => f.remote));
-      const offer = COMMON_PORTS.filter((p) => !running.has(p) && upstreamName(p, w.name, w.owner) !== null);
+      // The ports it is listening on, when On-Demand has said; the usual ones otherwise.
+      const known = i.listening?.get(wsKey(w.owner, w.name));
+      const offer = (known ? known.slice(0, MAX_PORT_ITEMS) : COMMON_PORTS).filter((p) => !running.has(p) && upstreamName(p, w.name, w.owner) !== null);
       if (mine.length > 0 || offer.length > 0) sub.push(SEP);
       for (const f of mine) sub.push({ label: `localhost:${f.local} → ${f.remote} (stop)`, action: { type: "stop", id: f.id } });
       for (const p of offer) sub.push({ label: `Open on localhost:${p}`, action: { type: "forward", owner: w.owner, name: w.name, port: p } });
       // Metro's ports also open in the iOS Simulator on this Mac (src/sim/): it starts the forward itself if it is not running.
-      for (const p of METRO_PORTS) {
+      for (const p of METRO_PORTS.filter((n) => !known || known.includes(n))) {
         if (upstreamName(p, w.name, w.owner) !== null) sub.push({ label: `Open ${p} in iOS Simulator`, action: { type: "simulator", owner: w.owner, name: w.name, port: p } });
       }
       rows.push({ label: mine.length > 0 ? `${w.name} (localhost:${mine.map((f) => f.local).join(", ")})` : w.name, submenu: sub });

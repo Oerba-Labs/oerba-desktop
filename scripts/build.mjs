@@ -35,7 +35,7 @@ if (packaged) {
   // The packaged app's own package.json: no dependencies (electron-updater is bundled into main.js), no scripts.
   const root = JSON.parse(readFileSync("package.json", "utf8"));
   writeFileSync(`${out}/package.json`, JSON.stringify({ name: root.name, productName: "Oerba", version: root.version, description: root.description, main: "main.js", author: "Oerba Labs", license: root.license }, null, 2) + "\n");
-  // The iPhone panel's helper, beside app.asar rather than in it (electron-builder.yml's extraResources): its native code, and the
+  // The dev panel's helper, beside app.asar rather than in it (electron-builder.yml's extraResources): its native code, and the
   // libraries it hands the simulator, must be files on disk.
   stageServeSim("build/resources/serve-sim");
 } else {

@@ -1,4 +1,4 @@
-/* The iPhone panel's bar. The values are Oerba's Quiet Slate tokens, copied from Oerba's own stylesheet, light and dark. Geist is not bundled here; the system face stands in until the app ships fonts. */
+/* The dev panel's bar. The values are Oerba's Quiet Slate tokens, copied from Oerba's own stylesheet, light and dark. Geist is not bundled here; the system face stands in until the app ships fonts. */
 :root {
   --ground: #F6F7F9;  --surface: #FFFFFF;  --sunk: #EEF0F3;  --rule: #E3E6EB;
   --ink: #12141A;  --ink2: #3A4150;  --muted: #596071;
@@ -22,7 +22,13 @@ html, body { height: 100%; }
 body { margin: 0; background: var(--surface); color: var(--ink); font: 13px/1.4 var(--sans); -webkit-font-smoothing: antialiased; overflow: hidden; user-select: none; }
 header { height: 100%; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px; border-left: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
 .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.status { flex: 1; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+button.device { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 55%; border-color: transparent; padding: 3px 6px; }
+.caret { color: var(--muted); font-size: 11px; }
+.app { flex: 1; min-width: 0; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.status { flex: 1; min-width: 0; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* While the bar says something, it takes the app's place. */
+header.busy .app { display: none; }
+header:not(.busy) .status { display: none; }
 button { font: inherit; cursor: pointer; border-radius: var(--radius); border: 1px solid var(--rule); padding: 3px 10px; background: var(--surface); color: var(--ink); }
 button:hover { background: var(--sunk); }
 button.close { border-color: transparent; padding: 3px 8px; color: var(--ink2); }

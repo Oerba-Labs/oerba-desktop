@@ -3,7 +3,8 @@
 
 import { app, autoUpdater as squirrel, BrowserWindow, dialog, ipcMain, net, powerMonitor, shell, WebContentsView, type WebPreferences } from "electron";
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { SETUP_URL, SIMBAR_URL, UPDATE_URL } from "./policy/bundled";
 import { declareBundledScheme, serveBundled } from "./shell/protocol";
@@ -24,6 +25,8 @@ import { RelayManager } from "./relay/manager";
 import { loopbackUpstream, ONDEMAND } from "./relay/rules";
 import { external, installHardening, setRole } from "./shell/hardening";
 import { SimPanel } from "./sim/panel";
+import { DeviceMemory } from "./sim/remember";
+import { onDemandPorts } from "./present/ports";
 
 // Before anything loads: a packaged app opened with a command-line switch (a debugger port, no sandbox, no web security)
 // is being asked to run loosened, and does not start. An unpackaged run is the developer's own and is unaffected.
@@ -44,7 +47,7 @@ const config = configFrom(process.argv, app.isPackaged);
 // beside any other copy, so it does not take the lock.)
 if (!config.selftest && !app.requestSingleInstanceLock()) app.exit(0);
 app.on("second-instance", () => { showWindow(); });
-// simOrigin is set by the iPhone panel alone, while it shows serve-sim's preview.
+// simOrigin is set by the dev panel alone, while it shows serve-sim's preview.
 const policy: NavPolicy = { oerbaOrigin: config.oerbaOrigin, setupUrl: SETUP_URL, updateUrl: UPDATE_URL, simbarUrl: SIMBAR_URL, simOrigin: null };
 declareBundledScheme();
 
@@ -88,14 +91,14 @@ const updater = new Updater(
   },
   { now: () => Date.now(), idle: (seconds) => testIdle ?? powerMonitor.getSystemIdleState(seconds), panelOpen: () => panel?.server.alive === true, before: async () => { await panel?.close(); } },
 );
-/** A restart for an update asked for from the menu: the iPhone panel goes first, as from the update window. */
+/** A restart for an update asked for from the menu: the dev panel goes first, as from the update window. */
 function restartForUpdate(): void { void (async () => { await panel?.close(); await updater.restart(); })(); }
 let updateWindow: UpdateWindow | null = null;
 // The localhost forwards. They dial On-Demand's names; only the self-test may put a loopback stand-in in their place, and
 // only when config.ts found an unpackaged app given --selftest (a packaged app's config never holds one).
 const relay = new RelayManager((config.relayUpstream !== null && loopbackUpstream(config.relayUpstream)) || ONDEMAND, () => presence?.redraw());
 
-/** The setup screen or Oerba's page fills the window, less the iPhone panel's column at the right while it is open. */
+/** The setup screen or Oerba's page fills the window, less the dev panel's column at the right while it is open. */
 function fit(view: WebContentsView): void {
   if (!win) return;
   const [width = 0, height = 0] = win.getContentSize();
@@ -112,7 +115,7 @@ function createWindow(): BrowserWindow {
   const w = new BrowserWindow({ width: 1200, height: 800, minWidth: 640, minHeight: 480, show: !config.selftest, title: "Oerba", backgroundColor: "#F6F7F9", webPreferences: { ...SAFE } });
   w.on("resize", relayout);
   // Closing the window hides it: the app keeps running in the menu bar until Quit or ⌘Q.
-  // It also closes the iPhone panel, which stops serve-sim: nothing of it stays armed in the simulator behind a hidden window.
+  // It also closes the dev panel, which stops serve-sim: nothing of it stays armed in the simulator behind a hidden window.
   w.on("close", (e) => { if (!quitting && !restartingForUpdate) { e.preventDefault(); w.hide(); void panel?.close(); } });
   w.on("closed", () => { stopPolling(); win = null; setupView = null; oerbaView = null; void panel?.close(); });
   return w;
@@ -237,20 +240,33 @@ app.whenReady().then(() => {
   serveBundled(__dirname);
   installHardening(policy);
   panel = new SimPanel(policy, SAFE, {
-    window: () => win, relayout,
+    window: () => win, relayout, choose: () => { void presence?.chooseDevice(); },
     refuse: () => (app.isPackaged && !app.isInApplicationsFolder() ? "Move Oerba to Applications, open it from there, and press Open in iOS Simulator again." : null),
   });
-  presence = new Presence({ oerbaOrigin: config.oerbaOrigin, fetchFn: presentFetch, intervalMs: config.presentMs, windowShown: () => !!win && win.isVisible() && !win.isMinimized(), show: showWindow, openRoute, palette: openPalette, openUpdate: () => updateWindow?.show(), restartForUpdate, onIn: () => updater.start(), quit: () => app.quit(), relay, openLocal: (u) => external.open(u), showPanel: (udid, name) => { showWindow(); return panel ? panel.show(udid, name) : Promise.resolve(); } });
+  // Which device each workspace was last opened on: a file of the app's own, or, for the self-test, one in a scratch folder, so
+  // that a run never touches the person's.
+  const scratch = config.selftest ? mkdtempSync(path.join(tmpdir(), "oerba-selftest-")) : null;
+  const dropScratch = (): void => { if (scratch) rmSync(scratch, { recursive: true, force: true }); };
+  app.on("will-quit", dropScratch);
+  const memory = new DeviceMemory(path.join(scratch ?? app.getPath("userData"), "devices.json"));
+  const devPanel = {
+    show: (udid: string, name: string, ctx: { owner: string; name: string; remote: number }) => { showWindow(); return panel ? panel.show(udid, name, ctx) : Promise.resolve(); },
+    say: (status: string) => panel?.say({ status }),
+    context: () => panel?.context ?? null,
+    device: () => panel?.device ?? null,
+    popup: (menu: Electron.Menu) => panel?.popup(menu),
+  };
+  presence = new Presence({ oerbaOrigin: config.oerbaOrigin, fetchFn: presentFetch, intervalMs: config.presentMs, windowShown: () => !!win && win.isVisible() && !win.isMinimized(), show: showWindow, openRoute, palette: openPalette, openUpdate: () => updateWindow?.show(), restartForUpdate, onIn: () => updater.start(), quit: () => app.quit(), relay, openLocal: (u) => external.open(u), panel: devPanel, memory, ports: config.selftest ? null : onDemandPorts(presentFetch) });
   presence.start();
   // The Mac's waking from sleep asks for an update too (a laptop asleep at the hour misses it).
   powerMonitor.on("resume", () => { void updater.check(); });
-  // Before an update restarts the app, the iPhone panel stops serve-sim, which takes its loader out of the simulator.
+  // Before an update restarts the app, the dev panel stops serve-sim, which takes its loader out of the simulator.
   updateWindow = new UpdateWindow(policy, SAFE, updater, config.selftest, async () => { await panel?.close(); });
   win = createWindow();
   showSetup();
   if (__SELFTEST__ && config.selftest) {
     // Loaded only for an unpackaged app given --selftest (config.ts): the self-test is not in the packaged code path.
-    void import("./selftest").then((m) => m.runSelftest({ config, policy, getWin: () => win, getSetup: () => setupView, getOerba: () => oerbaView, getPresence: () => presence, getUpdater: () => updater, getRelay: () => relay, openPalette, getUpdateWindow: () => updateWindow, setEngine: (e) => { testEngine = e; }, setIdle: (i) => { testIdle = i; }, SAFE, fit, getPanel: () => panel }));
+    void import("./selftest").then((m) => m.runSelftest({ config, policy, getWin: () => win, getSetup: () => setupView, getOerba: () => oerbaView, getPresence: () => presence, getUpdater: () => updater, getRelay: () => relay, openPalette, getUpdateWindow: () => updateWindow, setEngine: (e) => { testEngine = e; }, setIdle: (i) => { testIdle = i; }, SAFE, fit, getPanel: () => panel, dropScratch }));
   }
   app.on("activate", () => { if (!win) { win = createWindow(); showSetup(); } else showWindow(); });
 });

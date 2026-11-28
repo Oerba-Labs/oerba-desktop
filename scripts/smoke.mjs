@@ -18,6 +18,8 @@ const page = (title) => `<!doctype html><title>${title}</title><p>${title}</p>`;
 const oerba = createServer((req, res) => {
   if (req.method === "POST" && req.url === "/__open") { open = true; res.writeHead(204).end(); return; }
   if (req.method === "POST" && req.url === "/__now") { nowBody = second; res.writeHead(204).end(); return; }
+  // The second answer again, with alice's workspace running: what waits and the deploys are the same, so nothing new is notified.
+  if (req.method === "POST" && req.url === "/__now/running") { nowBody = { ...second, machines: base.machines }; res.writeHead(204).end(); return; }
   if (req.url === "/api/now") { res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(nowBody)); return; }
   if (req.url === "/api/who") {
     if (!open) { res.writeHead(503).end("not shared yet"); return; }

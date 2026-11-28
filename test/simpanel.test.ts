@@ -121,9 +121,11 @@ test("with the panel, the sequence does not open Device Hub, and says which devi
   assert.ok(!calls.some((c) => c.startsWith("/usr/bin/open ")), calls.join("\n"));
 });
 
-test("the panel's bar offers Close alone: no Pop out, in its page, its script or its bridge (taken off in 0.5.2)", () => {
+test("the panel's bar offers the device button and Close: no Pop out, in its page, its script or its bridge (taken off in 0.5.2)", () => {
   const page = readFileSync("static/simbar.html", "utf8");
-  assert.deepEqual([...page.matchAll(/<button\b[^>]*\bid="([^"]+)"/g)].map((m) => m[1]), ["close"]);
+  assert.deepEqual([...page.matchAll(/<button\b[^>]*\bid="([^"]+)"/g)].map((m) => m[1]), ["device", "close"]);
+  // The bridge carries the two actions and no device: the picker is made in the main process from simctl's own list.
+  assert.ok(/act: \(action: "devices" \| "close"\)/.test(readFileSync("src/preload-simbar.ts", "utf8")));
   for (const f of ["static/simbar.html", "src/renderer/simbar.ts", "src/preload-simbar.ts", "src/sim/panel.ts"]) {
     assert.ok(!/"popout"|popOut\(/.test(readFileSync(f, "utf8")), f);
   }

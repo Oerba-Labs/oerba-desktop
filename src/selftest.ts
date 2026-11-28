@@ -33,6 +33,8 @@ export interface Hooks {
   SAFE: WebPreferences;
   fit(view: WebContentsView): void;
   getPanel(): SimPanel | null;
+  /** Removes the run's scratch folder (the device memory's): app.exit skips will-quit. */
+  dropScratch(): void;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -55,7 +57,7 @@ export async function runSelftest(h: Hooks): Promise<void> {
   // Notifications are recorded and never shown, in this run alone.
   const notes: Item[] = [];
   sink.show = (item) => { notes.push(item); };
-  const watchdog = setTimeout(() => { console.log("FAIL smoke run timed out"); app.exit(1); }, 60_000);
+  const watchdog = setTimeout(() => { console.log("FAIL smoke run timed out"); h.dropScratch(); app.exit(1); }, 60_000);
   try {
     const other = h.config.otherOrigin;
     if (!other) throw new Error("--other-origin is needed");
@@ -204,7 +206,8 @@ export async function runSelftest(h: Hooks): Promise<void> {
       }
     }
 
-    // 4g. The iPhone panel, with Expo Go there: the press opens the address and then the panel beside Oerba's page, never Device Hub.
+    // 4g. The dev panel, with Expo Go there: the press opens the address and then the panel beside Oerba's page, never Device Hub;
+    // its bar names the device and the app, and its picker moves the app to another device, which the next press uses.
     // serve-sim is a stand-in that starts nothing and says why, so the panel shows its bar and the reason, and no preview.
     {
       const panel = h.getPanel();
@@ -213,9 +216,10 @@ export async function runSelftest(h: Hooks): Promise<void> {
       const calls: string[] = [];
       const realRun = simulator.run;
       const SIM = "5E5E5E5E-0000-4000-8000-5E5E5E5E5E5E";
+      const SIM2 = "6F6F6F6F-0000-4000-8000-6F6F6F6F6F6F";
       simulator.run = async (file, args) => {
         calls.push([file, ...args].join(" "));
-        if (args.join(" ") === "simctl list devices --json") return { code: 0, stdout: JSON.stringify({ devices: { "com.apple.CoreSimulator.SimRuntime.iOS-26-5": [{ udid: SIM, isAvailable: true, deviceTypeIdentifier: "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro", state: "Booted", name: "iPhone 17 Pro" }] } }) };
+        if (args.join(" ") === "simctl list devices --json") return { code: 0, stdout: JSON.stringify({ devices: { "com.apple.CoreSimulator.SimRuntime.iOS-26-5": [{ udid: SIM, isAvailable: true, deviceTypeIdentifier: "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro", state: "Booted", name: "iPhone 17 Pro" }, { udid: SIM2, isAvailable: true, deviceTypeIdentifier: "com.apple.CoreSimulator.SimDeviceType.iPhone-17", state: "Shutdown", name: "iPhone 17" }] } }) };
         return { code: 0, stdout: "" };
       };
       const realServer = panel?.server;
@@ -232,7 +236,30 @@ export async function runSelftest(h: Hooks): Promise<void> {
         const bar = await until("the panel's bar", () => webContents.getAllWebContents().find((w) => w.getURL() === h.policy.simbarUrl));
         const said = await until("the bar's words", async () => { const t = String(await bar.executeJavaScript("document.getElementById('status').textContent")); return t.includes("stand-in") ? t : null; });
         check("the bar says why the panel could not start, and offers no Pop out", said.includes("a stand-in starts nothing") && !said.includes("Pop out"), said);
-        check("the bar's one button is Close", await bar.executeJavaScript("document.getElementById('popout') === null && [...document.querySelectorAll('button')].map((b) => b.id).join() === 'close'") === true);
+        check("the bar names the device and the workspace's app", await bar.executeJavaScript("document.getElementById('name').textContent + '|' + document.getElementById('app').textContent") === "iPhone 17 Pro|demo · Metro 8081");
+        const items = await presence.deviceMenu();
+        const listed = (items ?? []).filter((m) => m.kind !== "separator").map((m) => `${m.label}${m.checked ? " (ticked)" : ""}`).join("|");
+        check("the picker lists the running device, ticked, then the others by runtime", listed === "Running|iPhone 17 Pro  iOS 26.5 (ticked)|iOS 26.5|iPhone 17", listed);
+        // The bar's button asks the main process for the picker; a stand-in answers here, since a real menu waits for a click.
+        let asked = 0;
+        const realChoose = presence.chooseDevice;
+        presence.chooseDevice = async () => { asked++; };
+        await bar.executeJavaScript("document.getElementById('device').click(); 1");
+        await until("the picker asked for", () => asked > 0);
+        presence.chooseDevice = realChoose;
+        check("the bar's device button asks for the picker", asked === 1, String(asked));
+        // The forward's port is not compared here: the presence's own cycle may stop and start the forward between a press and a
+        // check (the stand-in Oerba says the workspace failed), and the check above ties the address to the forward already.
+        const opened = (c: string, udid: string): boolean => new RegExp(`^/usr/bin/xcrun simctl openurl ${udid} exp://127\\.0\\.0\\.1:\\d+$`).test(c);
+        const c1 = calls.length;
+        await presence.pickDevice("99999999-0000-4000-8000-999999999999");
+        check("a device the picker did not list is not opened", calls.length === c1, calls.slice(c1).join(" | "));
+        await presence.pickDevice(SIM2);
+        check("a device chosen in the picker is booted, the app opened there, and the panel moved to it", calls.includes(`/usr/bin/xcrun simctl boot ${SIM2}`) && calls.slice(c1).some((c) => opened(c, SIM2)) && started[started.length - 1] === SIM2 && panel.device === SIM2, `${String(panel.device)} ${started.join()} ${calls.slice(c1).join(" | ")}`);
+        const c2 = calls.length;
+        await presence.openInSimulator("alice", "demo", 8081);
+        check("the next press for that workspace uses the device it was last opened on", calls.slice(c2).some((c) => opened(c, SIM2)), calls.slice(c2).join(" | "));
+        check("the bar's buttons are the device and Close, and no Pop out", await bar.executeJavaScript("document.getElementById('popout') === null && [...document.querySelectorAll('button')].map((b) => b.id).join() === 'device,close'") === true);
         check("no preview was made, and none may be loaded", h.policy.simOrigin === null && !webContents.getAllWebContents().some((w) => w.getURL().startsWith("http://127.0.0.1:3200")));
         check("the bar has a bridge, and Oerba's page still has none", await bar.executeJavaScript("typeof window.oerbaSimbar === 'object'") === true && await oerba.webContents.executeJavaScript("typeof window.oerbaSimbar") === "undefined");
         await bar.executeJavaScript("document.getElementById('close').click(); 1");
@@ -244,6 +271,30 @@ export async function runSelftest(h: Hooks): Promise<void> {
         simulator.run = realRun;
         if (panel && realServer) panel.server = realServer;
       }
+    }
+
+    // 4h. The ports a workspace listens on, from a stand-in for On-Demand: the menu offers those alone, and Metro starting earns one
+    // offer to open the app, never on the first read. The presence's own cycle reads too (every 400 ms here), so offers are counted,
+    // whichever read earned them; the notifications' limiter is full here, so the notifications themselves are not looked for.
+    {
+      await fetch(`${h.policy.oerbaOrigin}/__now/running`, { method: "POST" });
+      await presence.refresh();
+      let listening: number[] = [3000];
+      const asked = new Set<string>();
+      const n0 = presence.offerCount;
+      presence.ports = async (owner, name) => { asked.add(`${owner}/${name}`); return owner === "alice" && name === "demo" ? listening : null; };
+      await presence.refresh();
+      check("only the person's running workspace was asked about", [...asked].join() === "alice/demo", [...asked].join());
+      check("the first read earned no offer", presence.offerCount === n0, String(presence.offerCount - n0));
+      listening = [3000, 8081];
+      await presence.refresh();
+      check("Metro starting earned one offer, for its workspace and port", presence.offerCount === n0 + 1 && JSON.stringify(presence.lastOffer) === JSON.stringify({ owner: "alice", name: "demo", port: 8081 }), `${presence.offerCount - n0} ${JSON.stringify(presence.lastOffer)}`);
+      await presence.refresh();
+      await new Promise((r) => setTimeout(r, 500));
+      check("Metro still listening earned none more", presence.offerCount === n0 + 1, String(presence.offerCount - n0));
+      const labels3 = presence.labels();
+      check("the menu offers the ports the workspace listens on, and no other", labels3.includes("    Open on localhost:3000") && labels3.includes("    Open 8081 in iOS Simulator") && !labels3.includes("    Open on localhost:5173") && !labels3.includes("    Open 19000 in iOS Simulator"), labels3.join(" | "));
+      presence.ports = null;
     }
 
     // 4c. An update, offered by a stand-in for electron-updater: downloaded by itself, said once, then the menu, the window and Restart.
@@ -367,5 +418,6 @@ export async function runSelftest(h: Hooks): Promise<void> {
   }
   clearTimeout(watchdog);
   console.log(failed === 0 ? "smoke: all passed" : `smoke: ${failed} failed`);
+  h.dropScratch();
   app.exit(failed === 0 ? 0 : 1);
 }

@@ -74,7 +74,7 @@ test("updates are looked for every hour, wait a day for the person, and count se
   assert.equal(AWAY_IDLE_S, 420);
 });
 
-test("the app restarts itself only for a ready update, a day after, with the person away and the iPhone panel closed", () => {
+test("the app restarts itself only for a ready update, a day after, with the person away and the dev panel closed", () => {
   const now = 1_000_000_000_000;
   const ok = { phase: "ready" as const, readyAt: now - READY_GRACE_MS, now, idle: "idle" as const, panelOpen: false };
   assert.equal(mayRestartAlone(ok), true);

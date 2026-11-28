@@ -21,7 +21,7 @@ export const RETRY_AFTER_MS = 24 * 60 * 60 * 1000;
 export type Idle = "active" | "idle" | "locked" | "unknown";
 
 /** Whether the app may restart itself to install a downloaded update: only when one is ready, a day has passed since it was,
-    the person is away (no input for AWAY_IDLE_S, or the screen locked; "unknown" is not away), and the iPhone panel is closed,
+    the person is away (no input for AWAY_IDLE_S, or the screen locked; "unknown" is not away), and the dev panel is closed,
     so that no simulator session is cut short. */
 export function mayRestartAlone(s: { phase: Phase; readyAt: number | null; now: number; idle: Idle; panelOpen: boolean }): boolean {
   return s.phase === "ready" && s.readyAt !== null && s.now - s.readyAt >= READY_GRACE_MS && (s.idle === "idle" || s.idle === "locked") && !s.panelOpen;

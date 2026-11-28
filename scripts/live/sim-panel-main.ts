@@ -1,4 +1,4 @@
-/* A live run of the iPhone panel on this Mac, without Oerba's page: scripts/sim-panel-live.mjs builds and starts it. It opens the
+/* A live run of the dev panel on this Mac, without Oerba's page: scripts/sim-panel-live.mjs builds and starts it. It opens the
    panel for the booted iPhone with the app's own code (src/sim/panel.ts, its server and the app's hardening), then checks:
    the preview draws; a click in it reaches the phone; the preview cannot be sent elsewhere; serve-sim's cookie is in the panel's
    own session alone; and closing the panel stops serve-sim and takes its loader out of the simulator. Prints one line a check. */
@@ -28,13 +28,13 @@ app.whenReady().then(async () => {
   serveBundled(__dirname);
   const policy: NavPolicy = { oerbaOrigin: "https://app.oerba.dev", setupUrl: SETUP_URL, updateUrl: UPDATE_URL, simbarUrl: SIMBAR_URL, simOrigin: null };
   installHardening(policy);
-  const win = new BrowserWindow({ width: 1100, height: 900, show: false, title: "iPhone panel live run", webPreferences: { ...SAFE } });
+  const win = new BrowserWindow({ width: 1100, height: 900, show: false, title: "Dev panel live run", webPreferences: { ...SAFE } });
   // Above the person's other windows, on whichever desktop they are on, without taking their keyboard: a covered window's pages
   // are hidden to Chromium, and a hidden page sends no taps.
   win.setAlwaysOnTop(true, "floating");
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   win.showInactive();
-  const panel = new SimPanel(policy, SAFE, { window: () => win, relayout: () => undefined, refuse: () => null });
+  const panel = new SimPanel(policy, SAFE, { window: () => win, relayout: () => undefined, choose: () => undefined, refuse: () => null });
   try {
     await checks(panel, policy);
   } catch (e) {
@@ -75,7 +75,7 @@ async function phone(server: { port: number; token: string }, name: string): Pro
 
 async function checks(panel: SimPanel, policy: NavPolicy): Promise<void> {
   const t0 = Date.now();
-  await panel.show(udid, "iPhone");
+  await panel.show(udid, "iPhone", { owner: "live", name: "check", remote: 8081 });
   say(panel.server.running !== null, `serve-sim started for the device in ${Date.now() - t0} ms, on ${panel.server.running?.origin ?? `nothing (the bar says: ${panel.status.status})`}`);
   const origin = panel.server.running?.origin ?? "none";
   let preview: WebContents | undefined;

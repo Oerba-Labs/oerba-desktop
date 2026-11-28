@@ -87,7 +87,7 @@ async function bundleId(plist: string): Promise<string | null> {
   });
 }
 
-/** What the Updater needs to restart by itself: the clock, the person's presence, whether the iPhone panel is open, and what
+/** What the Updater needs to restart by itself: the clock, the person's presence, whether the dev panel is open, and what
     must happen first (the panel closed, so serve-sim takes its loader out of the simulator). */
 export interface Away {
   now(): number;

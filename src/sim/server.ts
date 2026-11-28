@@ -1,4 +1,4 @@
-/* Runs serve-sim for the iPhone panel: Expo's command, in a utility process of the app's own (Electron's Node, so no Node need be
+/* Runs serve-sim for the dev panel: Expo's command, in a utility process of the app's own (Electron's Node, so no Node need be
    installed, and the RunAsNode fuse stays off), with the words of src/sim/serve.ts and nothing else. One at a time, for one device.
    It is started only by the app's own menu, through the panel (src/sim/panel.ts); no page, bridge or IPC starts it.
 
@@ -66,7 +66,7 @@ export class SimServer implements SimServing {
   /** Starts serve-sim for this device, or returns the one already running for it. A different device stops the first. */
   async start(udid: string): Promise<Started> {
     if (this.current?.udid === udid && this.child) return this.current;
-    if (this.starting) return { why: "the iPhone panel is still starting" };
+    if (this.starting) return { why: "the dev panel is still starting" };
     const e = this.epoch;
     this.starting = (async (): Promise<Started> => {
       await this.halt();
@@ -81,7 +81,7 @@ export class SimServer implements SimServing {
     return new Promise((resolve) => {
       let child: UtilityProcess;
       try {
-        child = utilityProcess.fork(serveSimEntry(), args, { stdio: "pipe", serviceName: "Oerba iPhone panel", env: serveSimEnv(process.env) });
+        child = utilityProcess.fork(serveSimEntry(), args, { stdio: "pipe", serviceName: "Oerba dev panel", env: serveSimEnv(process.env) });
       } catch {
         resolve({ why: "its helper could not be started" });
         return;

@@ -1,4 +1,4 @@
-/* The iPhone panel's helper, Expo's serve-sim (`@expo/serve-sim`, Apache-2.0), as rules: the words it is started with, how its
+/* The dev panel's helper, Expo's serve-sim (`@expo/serve-sim`, Apache-2.0), as rules: the words it is started with, how its
    address and token are read from what it prints, and which page the panel may show. Pure: nothing here starts a process
    (src/sim/server.ts does) or touches a view (src/sim/panel.ts does), so a test can read every decision. */
 

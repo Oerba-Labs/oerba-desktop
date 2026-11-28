@@ -34,7 +34,7 @@ assert_no_selftest() {
   return $bad
 }
 
-# The iPhone panel's helper beside app.asar (Contents/Resources/serve-sim): the version package.json pins, the parts
+# The dev panel's helper beside app.asar (Contents/Resources/serve-sim): the version package.json pins, the parts
 # scripts/stage-serve-sim.mjs carries, and none it leaves out. With "signed", every binary and bundle in it must also verify
 # strictly and carry the app's own Team ID: the helper process runs under the hardened runtime with library validation on, so a
 # native addon or framework signed by anyone else would not load.

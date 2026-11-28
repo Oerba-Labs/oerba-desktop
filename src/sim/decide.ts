@@ -67,9 +67,12 @@ export function parseDevices(text: string): Device[] {
 
 export type Pick = { kind: "booted"; device: Device } | { kind: "boot"; device: Device } | { kind: "none" };
 
-/** A booted iOS device if there is one (an iPhone before any other, then the newest runtime's); else the first iPhone of the newest
-    iOS runtime that has one, to be booted; else none. */
-export function pickDevice(devices: readonly Device[]): Pick {
+/** The preferred device (the one the person chose in the dev panel, or last used for this workspace) when it is still in the list,
+    booted or to be booted; else a booted iOS device if there is one (an iPhone before any other, then the newest runtime's); else
+    the first iPhone of the newest iOS runtime that has one, to be booted; else none. */
+export function pickDevice(devices: readonly Device[], preferred: string | null = null): Pick {
+  const want = preferred !== null && isUdid(preferred) ? devices.find((d) => d.udid.toUpperCase() === preferred.toUpperCase()) : undefined;
+  if (want) return { kind: want.booted ? "booted" : "boot", device: want };
   const best = (list: readonly Device[]): Device | undefined => list.reduce<Device | undefined>((b, d) => (b === undefined || newer(d.runtime, b.runtime) ? d : b), undefined);
   const booted = devices.filter((d) => d.booted);
   const up = best(booted.filter((d) => d.iphone)) ?? best(booted);
@@ -79,6 +82,36 @@ export function pickDevice(devices: readonly Device[]): Pick {
   // The first of that runtime, in the order simctl lists them.
   const first = devices.find((d) => d.iphone && d.runtime.join(".") === fresh.runtime.join("."));
   return { kind: "boot", device: first ?? fresh };
+}
+
+/** A runtime as people say it: [26, 5, 0] is "iOS 26.5", [26, 5, 1] "iOS 26.5.1". */
+export const runtimeLabel = (v: readonly number[]): string => `iOS ${(v[2] ? v.slice(0, 3) : v.slice(0, 2)).join(".")}`;
+
+/** What the dev panel's bar says it shows: the workspace and its Metro port, "demo · Metro 8081". */
+export const appLabel = (workspace: string, port: number): string => `${workspace} · Metro ${port}`;
+
+/** The most devices the picker lists: a Mac with many runtimes has hundreds, and a menu that long is no use. */
+export const MAX_PICKER = 60;
+
+export interface PickerGroup { title: string; devices: Device[] }
+
+/** The dev panel's device picker: the running devices first (iPhones, then the newest runtime's), then each runtime's others, the
+    newest runtime first, each in the order simctl lists them. At most MAX_PICKER devices; a group left empty is not listed. */
+export function pickerGroups(devices: readonly Device[]): PickerGroup[] {
+  const rank = (a: Device, b: Device): number => (a.iphone !== b.iphone ? (a.iphone ? -1 : 1) : newer(a.runtime, b.runtime) ? -1 : newer(b.runtime, a.runtime) ? 1 : 0);
+  const groups: PickerGroup[] = [{ title: "Running", devices: devices.filter((d) => d.booted).slice().sort(rank) }];
+  const runtimes: number[][] = [];
+  for (const d of devices) if (!runtimes.some((r) => r.join(".") === d.runtime.join("."))) runtimes.push([...d.runtime]);
+  runtimes.sort((a, b) => (newer(a, b) ? -1 : newer(b, a) ? 1 : 0));
+  for (const r of runtimes) groups.push({ title: runtimeLabel(r), devices: devices.filter((d) => !d.booted && d.runtime.join(".") === r.join(".")) });
+  let left = MAX_PICKER;
+  const out: PickerGroup[] = [];
+  for (const g of groups) {
+    const take = g.devices.slice(0, Math.max(0, left));
+    left -= take.length;
+    if (take.length > 0) out.push({ title: g.title, devices: take });
+  }
+  return out;
 }
 
 /** How one press ended. */

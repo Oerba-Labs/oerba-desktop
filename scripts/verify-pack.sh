@@ -18,7 +18,7 @@ assert_fuses "$app" || exit 1
 echo "== the self-test is not in app.asar"
 assert_no_selftest "$app" "$scratch" || { echo "The self-test, tests or sources are in the package." >&2; exit 1; }
 
-echo "== the iPhone panel's helper is beside app.asar, as staged (its signatures are the release's to check)"
+echo "== the dev panel's helper is beside app.asar, as staged (its signatures are the release's to check)"
 assert_serve_sim "$app" || { echo "serve-sim is not as staged." >&2; exit 1; }
 
 echo "== latest-mac.yml reduces to the zip alone, checked against the zip"

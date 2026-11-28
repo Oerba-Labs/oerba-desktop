@@ -4,14 +4,15 @@
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>iPhone</title>
+<title>Dev panel</title>
 <link rel="stylesheet" href="simbar.css">
 </head>
 <body>
 <header>
-  <span id="name" class="name">iPhone</span>
+  <button id="device" type="button" class="device" title="Choose a device" aria-haspopup="menu"><span id="name" class="name">iPhone</span><span class="caret" aria-hidden="true">&#x25BE;</span></button>
+  <span id="app" class="app"></span>
   <span id="status" class="status"></span>
-  <button id="close" type="button" class="close" aria-label="Close the iPhone panel" title="Close">&#x2715;</button>
+  <button id="close" type="button" class="close" aria-label="Close the dev panel" title="Close">&#x2715;</button>
 </header>
 <script src="simbar.js"></script>
 </body>

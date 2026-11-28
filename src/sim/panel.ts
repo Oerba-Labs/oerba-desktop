@@ -1,5 +1,6 @@
-/* The iPhone panel: a column at the right of Oerba's window, drawn by the app beside Oerba's page, which it does not touch. Its bar
-   is a bundled page (the device's name and Close); below it, serve-sim's own preview of the simulator, where a click is a
+/* The dev panel (the iPhone panel until 0.6.0): a column at the right of Oerba's window, drawn by the app beside Oerba's page, which
+   it does not touch. Its bar is a bundled page (the device button, which opens the device picker, the workspace and app it shows,
+   and Close); below it, serve-sim's own preview of the simulator, where a click is a
    tap and typing types. The preview is a view of its own:
    - its role ("simulator") lets its top frame be serve-sim's page at the one origin running now, and nothing else, and it may
      make no frames;
@@ -10,10 +11,11 @@
    closing (hiding) the window, quitting and restarting for an update each stop serve-sim. It has had no Pop out (to Device
    Hub) since 0.5.2: the owner had it taken off, the panel being where the phone is shown. */
 
-import { BrowserWindow, ipcMain, session, WebContentsView, type IpcMainInvokeEvent, type WebPreferences } from "electron";
+import { BrowserWindow, ipcMain, session, WebContentsView, type IpcMainInvokeEvent, type Menu, type WebPreferences } from "electron";
 import path from "node:path";
 import { isSimbarSender, type NavPolicy } from "../policy/navigation";
 import { refusals, setRole } from "../shell/hardening";
+import { appLabel } from "./decide";
 import { BAR_HEIGHT, panelWidth, previewRequestAllowed, previewUrl } from "./serve";
 import { SimServer, type SimServing } from "./server";
 
@@ -24,20 +26,32 @@ export interface PanelHooks {
   window(): BrowserWindow | null;
   /** Oerba's own view is laid out again: the panel took, or gave back, its width. */
   relayout(): void;
+  /** The bar's device button was pressed: the device picker is made (from simctl's own list, in the main process) and popped. */
+  choose(): void;
   /** Why the panel may not start here, or null. A packed app outside Applications (run from its disk image, or moved by macOS to
       a random place) is refused: serve-sim names a library inside the app to the simulator, and a path that does not last could
       later hold something else, were serve-sim to stop without taking it out. */
   refuse(): string | null;
 }
 
+/** What the panel shows: a workspace's Metro port, by the workspace's owner and name and the port's number in the workspace. */
+export interface PanelContext { owner: string; name: string; remote: number }
+
+export interface BarState { device: string; app: string; status: string }
+
 export class SimPanel {
   private bar: WebContentsView | null = null;
   private preview: WebContentsView | null = null;
   private udid: string | null = null;
-  private state = { name: "iPhone", status: "" };
+  private ctx: PanelContext | null = null;
+  private state: BarState = { device: "iPhone", app: "", status: "" };
 
-  /** What the bar says now: its device's name, and why the panel is not showing it, if it is not. */
-  get status(): { name: string; status: string } { return this.state; }
+  /** What the bar says now: its device's name, the workspace and app, and what the panel is doing or why it is not showing it. */
+  get status(): BarState { return this.state; }
+  /** The workspace and port the panel shows, while it is open. */
+  get context(): PanelContext | null { return this.ctx; }
+  /** The device it shows, while it is open. */
+  get device(): string | null { return this.udid; }
   /** serve-sim. Replaced only by the self-test, with one that starts nothing. */
   server: SimServing = new SimServer();
 
@@ -55,6 +69,7 @@ export class SimPanel {
     ipcMain.handle("simbar:act", async (e, action: unknown) => {
       if (!from(e)) return;
       if (action === "close") await this.close();
+      else if (action === "devices") this.hooks.choose();
     });
   }
 
@@ -64,15 +79,17 @@ export class SimPanel {
   /** The width the panel takes from the window now: none while it is closed. */
   width(windowWidth: number): number { return this.open ? panelWidth(windowWidth) : 0; }
 
-  /** Shows the panel for this device and starts serve-sim for it; a panel already open for another device moves to this one. */
-  async show(udid: string, name: string): Promise<void> {
+  /** Shows the panel for this device and this workspace's app, and starts serve-sim for it; a panel already open for another
+      device moves to this one. */
+  async show(udid: string, name: string, ctx: PanelContext): Promise<void> {
     const win = this.hooks.window();
     if (!win) return;
     this.udid = udid;
+    this.ctx = ctx;
     // A preview of another device, or of a serve-sim no longer running, goes first: its origin is allowed no longer.
     if (this.server.running?.udid !== udid) this.dropPreview();
     const refused = this.hooks.refuse();
-    this.say({ name, status: refused ?? "Starting…" });
+    this.put({ device: name, status: refused ?? "Starting…" });
     if (!this.bar) {
       this.bar = new WebContentsView({ webPreferences: { ...this.safe, preload: path.join(__dirname, "preload-simbar.js") } });
       setRole(this.bar.webContents, "simbar");
@@ -87,7 +104,7 @@ export class SimPanel {
     if (this.udid !== udid || !this.bar) { await this.server.stop(); return; }
     if ("why" in started) {
       this.dropPreview();
-      this.say({ name, status: `Could not start: ${started.why}.` });
+      this.put({ device: name, status: `Could not start: ${started.why}.` });
       return;
     }
     this.policy.simOrigin = started.origin;
@@ -99,7 +116,7 @@ export class SimPanel {
     }
     this.layout();
     void this.preview.webContents.loadURL(previewUrl(started.port, started.token));
-    this.say({ name, status: "" });
+    this.put({ device: name, status: "" });
   }
 
   /** Lays the bar and the preview out in the right-hand column of the window. */
@@ -112,10 +129,25 @@ export class SimPanel {
     this.preview?.setBounds({ x: width - w, y: BAR_HEIGHT, width: w, height: Math.max(0, height - BAR_HEIGHT) });
   }
 
+  /** Says what the panel is doing (a device starting) or why it did not, in the bar. Nothing while it is closed. */
+  say(s: Partial<BarState>): void {
+    if (!this.bar) return;
+    this.put(s);
+  }
+
+  /** Pops the device picker just under the bar's device button. */
+  popup(menu: Menu): void {
+    const win = this.hooks.window();
+    if (!win || !this.bar) return;
+    const [width = 0] = win.getContentSize();
+    menu.popup({ window: win, x: width - panelWidth(width) + 8, y: BAR_HEIGHT });
+  }
+
   /** Closes the panel and stops serve-sim. */
   async close(): Promise<void> {
     const win = this.hooks.window();
     this.udid = null;
+    this.ctx = null;
     this.dropPreview();
     const bar = this.bar;
     this.bar = null;
@@ -142,11 +174,12 @@ export class SimPanel {
       that port is shown; the bar stays and says so. */
   private lost(): void {
     this.dropPreview();
-    if (this.bar) this.say({ ...this.state, status: "The panel's helper stopped. Open in iOS Simulator starts it again." });
+    if (this.bar) this.put({ status: "The panel's helper stopped. Open in iOS Simulator starts it again." });
   }
 
-  private say(s: { name: string; status: string }): void {
-    this.state = s;
-    if (this.bar && !this.bar.webContents.isDestroyed()) this.bar.webContents.send("simbar:state", s);
+  /** Records what the bar says, the workspace and app always from the panel's context, and sends it to the bar if it is there. */
+  private put(s: Partial<BarState>): void {
+    this.state = { ...this.state, ...s, app: this.ctx ? appLabel(this.ctx.name, this.ctx.remote) : "" };
+    if (this.bar && !this.bar.webContents.isDestroyed()) this.bar.webContents.send("simbar:state", this.state);
   }
 }

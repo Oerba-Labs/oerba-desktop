@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { describe, deviceHubUrl, EXPO_GO, expoHint, expoUrl, isPort, isUdid, iosVersion, METRO_PORTS, parseDevices, pickDevice } from "../src/sim/decide";
-import { OnePress, openInSimulator, type Ran, type Runner } from "../src/sim/run";
+import { appLabel, describe, deviceHubUrl, EXPO_GO, expoHint, expoUrl, isPort, isUdid, iosVersion, MAX_PICKER, METRO_PORTS, parseDevices, pickDevice, pickerGroups, runtimeLabel } from "../src/sim/decide";
+import { listDevices, OnePress, openInSimulator, type Ran, type Runner } from "../src/sim/run";
 import { buildMenu, labelsOf } from "../src/present/menu";
 import { parseNow } from "../src/present/now";
 
@@ -250,4 +250,64 @@ test("the menu offers 'in iOS Simulator' on Metro's ports and on no web port", (
   const sub = menu.find((m) => m.label === "Workspaces")!.submenu![0]!.submenu!;
   const item = sub.find((m) => m.label === "Open 8081 in iOS Simulator")!;
   assert.deepEqual(item.action, { type: "simulator", owner: "alice", name: "demo", port: 8081 });
+});
+
+// The dev panel's picker (0.6.0).
+
+test("a preferred device still listed is used, booted or to be booted; one no longer listed, or not UUID-shaped, is not", () => {
+  const devices = parseDevices(text(LIST()));
+  const max = "1ABFBD1E-2DB7-4466-827C-5D6B2FC49AC9";
+  assert.deepEqual(pickDevice(devices, max), { kind: "boot", device: devices.find((d) => d.udid === max) });
+  assert.deepEqual(pickDevice(devices, max.toLowerCase()), { kind: "boot", device: devices.find((d) => d.udid === max) }, "a UDID's case does not matter");
+  const l = LIST();
+  l.devices["com.apple.CoreSimulator.SimRuntime.iOS-26-5"]![1]!.state = "Booted";
+  const booted = parseDevices(text(l));
+  assert.equal(pickDevice(booted, "0FE1D887-A703-470E-BE80-A84AD91DA511").kind, "booted");
+  const udidOf = (p: ReturnType<typeof pickDevice>): string | null => (p.kind === "none" ? null : p.device.udid);
+  // A booted device is still the default when the preferred one has gone, as before.
+  assert.equal(udidOf(pickDevice(booted, "99999999-0000-4000-8000-000000000000")), "0FE1D887-A703-470E-BE80-A84AD91DA511");
+  for (const bad of ["", "booted", `${max}\n`, "all"]) assert.equal(udidOf(pickDevice(devices, bad)), FIRST, JSON.stringify(bad));
+});
+
+test("the picker lists the running devices first, then each runtime's others, the newest runtime first", () => {
+  const l = LIST();
+  l.devices["com.apple.CoreSimulator.SimRuntime.iOS-26-5"]![0]!.state = "Booted";
+  l.devices["com.apple.CoreSimulator.SimRuntime.iOS-26-5"]!.push(dev("4D4D4D4D-0000-4000-8000-4D4D4D4D4D4D", "iPad-Air-13-inch-M3", "iPad Air 13-inch (M3)", "Booted"));
+  const groups = pickerGroups(parseDevices(text(l)));
+  assert.deepEqual(groups.map((g) => [g.title, g.devices.map((d) => d.name)]), [
+    ["Running", ["iPhone 17 Pro", "iPad Air 13-inch (M3)"]],
+    ["iOS 27.0", ["iPhone 18 Pro", "iPhone 18 Pro Max", "iPhone 17e"]],
+    ["iOS 26.5", ["iPhone 17 Pro Max"]],
+  ]);
+  assert.deepEqual(pickerGroups([]), [], "no devices, no groups");
+});
+
+test("the picker lists at most MAX_PICKER devices", () => {
+  const many = Array.from({ length: 90 }, (_, i) => dev(`${String(i).padStart(8, "0")}-0000-4000-8000-000000000000`, "iPhone-17", `iPhone ${i}`));
+  const groups = pickerGroups(parseDevices(text({ devices: { "com.apple.CoreSimulator.SimRuntime.iOS-26-5": many } })));
+  assert.equal(groups.reduce((n, g) => n + g.devices.length, 0), MAX_PICKER);
+});
+
+test("a runtime and the panel's app are said as people say them", () => {
+  assert.equal(runtimeLabel([26, 5, 0]), "iOS 26.5");
+  assert.equal(runtimeLabel([26, 5, 1]), "iOS 26.5.1");
+  assert.equal(runtimeLabel([27, 0, 0]), "iOS 27.0");
+  assert.equal(appLabel("demo", 8081), "demo · Metro 8081");
+});
+
+test("the device list asks Xcode first and changes nothing", async () => {
+  const { run, calls } = standIn({});
+  const r = await listDevices(run);
+  assert.equal(r.kind, "ok");
+  assert.deepEqual(calls, ["/usr/bin/xcode-select -p", "/usr/bin/xcrun --find simctl", "/usr/bin/xcrun simctl list devices --json"]);
+  assert.equal((await listDevices(standIn({ xcodeSelect: 2 }).run)).kind, "no-xcode");
+});
+
+test("the sequence on a chosen device boots that one and opens the address there", async () => {
+  const max = "1ABFBD1E-2DB7-4466-827C-5D6B2FC49AC9";
+  const { run, calls } = standIn({});
+  const o = await openInSimulator(8081, run, { window: false, udid: max });
+  assert.deepEqual(o, { kind: "opened", udid: max, name: "iPhone 18 Pro Max", booted: true, port: 8081, shown: true });
+  assert.ok(calls.includes(`/usr/bin/xcrun simctl boot ${max}`) && calls.includes(`/usr/bin/xcrun simctl openurl ${max} exp://127.0.0.1:8081`), calls.join("\n"));
+  assert.ok(!calls.some((c) => c.startsWith("/usr/bin/open ")), "the panel shows it: Device Hub is not opened");
 });

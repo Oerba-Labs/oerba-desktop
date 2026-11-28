@@ -4,7 +4,7 @@
    Booting a simulator is the only thing it changes on the Mac: it never erases, shuts down, creates or deletes one, and installs no app. */
 
 import { execFile } from "node:child_process";
-import { DEVICE_HUB_ID, deviceHubUrl, EXPO_GO, expoUrl, isUdid, parseDevices, pickDevice, SIMULATOR_ID, type Outcome } from "./decide";
+import { DEVICE_HUB_ID, deviceHubUrl, EXPO_GO, expoUrl, isUdid, parseDevices, pickDevice, SIMULATOR_ID, type Device, type Outcome } from "./decide";
 
 export interface Ran { code: number | null; stdout: string }
 /** Runs one program. The self-test and the unit tests put a stand-in here; the app never does. */
@@ -29,7 +29,7 @@ export const realRunner: Runner = (file, args, timeoutMs) => new Promise((resolv
 export const simulator = { run: realRunner };
 
 /** Shows a device: in Device Hub (Xcode 27) by its bundle id and deep link, else in Simulator (Xcode 26 and earlier) by its bundle id.
-    True if either opened. Only a press without the iPhone panel shows a device, which the app no longer makes. */
+    True if either opened. Only a press without the dev panel shows a device, which the app no longer makes. */
 export async function showDevice(udid: string, run: Runner): Promise<boolean> {
   if (!isUdid(udid)) return false;
   const hub = deviceHubUrl(udid);
@@ -37,19 +37,26 @@ export async function showDevice(udid: string, run: Runner): Promise<boolean> {
     (await run(OPEN, ["-b", SIMULATOR_ID, "--args", "-CurrentDeviceUDID", udid], QUICK)).code === 0;
 }
 
+/** The Mac's available iOS simulators, read from simctl; it changes nothing. Xcode itself is asked for first, not only the command
+    line tools: `xcode-select -p` before anything, since `xcrun` with no tools at all offers to install some. */
+export async function listDevices(run: Runner): Promise<{ kind: "ok"; devices: Device[] } | { kind: "no-xcode" } | { kind: "failed" }> {
+  if ((await run(XCODE_SELECT, ["-p"], QUICK)).code !== 0) return { kind: "no-xcode" };
+  if ((await run(XCRUN, ["--find", "simctl"], QUICK)).code !== 0) return { kind: "no-xcode" };
+  const list = await run(XCRUN, ["simctl", "list", "devices", "--json"], LIST);
+  if (list.code !== 0) return { kind: "failed" };
+  return { kind: "ok", devices: parseDevices(list.stdout) };
+}
+
 /** The whole sequence for a forward that took `port` here. Read-only until it boots a simulator. With `window` false the device is
-    not shown in Device Hub: the iPhone panel shows it instead, once the sequence has opened the address. */
-export async function openInSimulator(port: number, run: Runner, opts: { window: boolean } = { window: true }): Promise<Outcome> {
+    not shown in Device Hub: the dev panel shows it instead, once the sequence has opened the address. `udid` is the device to
+    use when it is still on this Mac (one the dev panel listed, or the one last used for this workspace); otherwise one is picked. */
+export async function openInSimulator(port: number, run: Runner, opts: { window: boolean; udid?: string | null } = { window: true }): Promise<Outcome> {
   const url = expoUrl(port);
   if (url === null) return { kind: "failed" };
 
-  // Xcode itself, not only the command line tools: `xcode-select -p` first, since `xcrun` with no tools at all offers to install some.
-  if ((await run(XCODE_SELECT, ["-p"], QUICK)).code !== 0) return { kind: "no-xcode" };
-  if ((await run(XCRUN, ["--find", "simctl"], QUICK)).code !== 0) return { kind: "no-xcode" };
-
-  const list = await run(XCRUN, ["simctl", "list", "devices", "--json"], LIST);
-  if (list.code !== 0) return { kind: "failed" };
-  const pick = pickDevice(parseDevices(list.stdout));
+  const listed = await listDevices(run);
+  if (listed.kind !== "ok") return { kind: listed.kind };
+  const pick = pickDevice(listed.devices, opts.udid ?? null);
   if (pick.kind === "none") return { kind: "no-iphone" };
   const { udid, name } = pick.device;
   if (!isUdid(udid)) return { kind: "failed" };

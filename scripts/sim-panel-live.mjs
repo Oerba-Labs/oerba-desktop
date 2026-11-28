@@ -1,4 +1,4 @@
-// A live run of the iPhone panel on this Mac: node scripts/sim-panel-live.mjs <udid> [out-dir]. It needs a booted iPhone simulator,
+// A live run of the dev panel on this Mac: node scripts/sim-panel-live.mjs <udid> [out-dir]. It needs a booted iPhone simulator,
 // and changes nothing on the Mac but what the panel itself does while it is open (serve-sim's loader in that simulator, taken out
 // again on close). It bundles scripts/live/sim-panel-main.ts with the app's own code into a temporary folder beside the bar's
 // bundled files, and runs it with this repository's Electron, with serve-sim as the packed app carries it (scripts/stage-serve-sim.mjs).
