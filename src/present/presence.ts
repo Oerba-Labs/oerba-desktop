@@ -97,6 +97,8 @@ export class Presence {
   private update: { version: string; ready: boolean } | null = null;
   private readonly simPress = new OnePress();
   private hinted = false;
+  /** Counts Forgets: a question answered after one was pressed while it was open is taken as Not Now. */
+  private forgets = 0;
   /** The ports each of the person's running workspaces is listening on, as On-Demand last said, by wsKey. */
   listening = new Map<string, number[]>();
   private portMem = freshPortMemory();
@@ -297,7 +299,9 @@ export class Presence {
       // Its code runs on this Mac there, as the person, and can read their files: asked once for each workspace, before any of it
       // starts, the forward included. Not now opens nothing and says nothing; the next press asks again.
       if (!this.d.memory.isAllowed(owner, name)) {
-        if (!(await consent.ask(owner, name))) return;
+        const forgets = this.forgets;
+        // Open after a Forget pressed while the question was open is not kept, and opens nothing: the later word wins.
+        if (!(await consent.ask(owner, name)) || this.forgets !== forgets) return;
         this.d.memory.allow(owner, name);
         this.render();
       }
@@ -418,13 +422,16 @@ export class Presence {
       app let run before goes on running and reloading. The forwards stay, as Open on localhost uses them; Stop in the menu ends
       each. Waits for a press under way, so the stop is never dropped. */
   async forgetAllowed(): Promise<void> {
+    this.forgets++;
     const written = this.d.memory.forgetAllowed();
     this.render();
-    while (this.simPress.running) await new Promise((r) => setTimeout(r, 100));
-    await this.simPress.run(async () => {
-      if (this.d.panel?.isOpen()) await this.d.panel.close();
-      await quitExpoGo(simulator.run);
-    });
+    try {
+      while (this.simPress.running) await new Promise((r) => setTimeout(r, 100));
+      await this.simPress.run(async () => {
+        try { if (this.d.panel?.isOpen()) await this.d.panel.close(); }
+        finally { await quitExpoGo(simulator.run); }
+      });
+    } catch { /* the yes is let go whatever the stop met; the notice below still comes */ }
     this.render();
     if (!written) {
       const item = { title: "Could not forget for good", body: "This app's devices.json could not be written: each workspace is asked again until it quits, and allowed again after.", route: "#/" };

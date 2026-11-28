@@ -65,7 +65,8 @@ export async function runSelftest(h: Hooks): Promise<void> {
   // The person's answer before a workspace's code first runs in the simulator: recorded, and Open unless a check says otherwise.
   const consentAsks: string[] = [];
   let consentAnswer = true;
-  consent.ask = async (owner, name) => { consentAsks.push(`${owner}/${name}`); return consentAnswer; };
+  let duringAsk: (() => void) | null = null;
+  consent.ask = async (owner, name) => { consentAsks.push(`${owner}/${name}`); duringAsk?.(); return consentAnswer; };
   const watchdog = setTimeout(() => { console.log("FAIL smoke run timed out"); h.dropScratch(); app.exit(1); }, 60_000);
   try {
     const other = h.config.otherOrigin;
@@ -383,6 +384,20 @@ export async function runSelftest(h: Hooks): Promise<void> {
         check("Forget lets every yes go: alice/demo is asked again, and Open opens it", consentAsks.length === askedBefore + 1 && consentAsks[askedBefore] === "alice/demo" && panel.open && panel.context?.name === "demo", consentAsks.join(" "));
         await presence.openInSimulator("alice", "demo", 8081);
         check("  and its yes is kept again", consentAsks.length === askedBefore + 1);
+        // Forget pressed while the question is open, then Open: the later word wins, and nothing is kept or opened.
+        let forgot: Promise<void> | null = null;
+        duringAsk = () => { forgot = presence.forgetAllowed(); };
+        const c11 = calls.length;
+        await presence.openInSimulator("dave", "late", 8081);
+        duringAsk = null;
+        await forgot;
+        check("Open answered after a Forget pressed while the question was open opens nothing",
+          !calls.slice(c11).some((c) => c.includes(" openurl ")) && !panel.open, calls.slice(c11).join(" | "));
+        consentAnswer = false;
+        const asks12 = consentAsks.length;
+        await presence.openInSimulator("dave", "late", 8081);
+        check("  and keeps no yes: the next press asks again", consentAsks.length === asks12 + 1 && consentAsks[asks12] === "dave/late", consentAsks.join(" "));
+        consentAnswer = true;
         await presence.devPanelFrom(null);
         await h.getRelay().stopAll();
         notes.length = 0;
