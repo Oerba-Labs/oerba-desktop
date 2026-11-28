@@ -2,7 +2,7 @@
    simctl's own list; no device is named from here), the workspace and app it shows, what the panel is doing, and Close. Every word
    from the main process is set with textContent. */
 
-interface BarState { device: string; app: string; status: string }
+interface BarState { device: string; app: string; status: string; loading: boolean }
 interface Bridge {
   getState(): Promise<unknown>;
   onState(cb: (state: unknown) => void): void;
@@ -17,9 +17,12 @@ function draw(raw: unknown): void {
   const s = raw as Partial<BarState>;
   if (typeof s.device === "string") el("name").textContent = s.device.slice(0, 60);
   el("app").textContent = typeof s.app === "string" ? s.app.slice(0, 80) : "";
-  const status = typeof s.status === "string" ? s.status.slice(0, 120) : "";
+  const said = typeof s.status === "string" ? s.status : "";
+  const status = said.slice(0, 120);
   el("status").textContent = status;
+  el("note").textContent = said.slice(0, 240);
   document.querySelector("header")?.classList.toggle("busy", status !== "");
+  document.body.classList.toggle("loading", s.loading === true);
 }
 
 if (bridge) {

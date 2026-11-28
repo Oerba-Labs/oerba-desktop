@@ -1,6 +1,7 @@
 /* The policies of src/policy/, wired to Electron. No decision is made here: each handler asks the pure modules. */
 
 import { app, session, shell, type Session, type WebContents, type WebFrameMain } from "electron";
+import { desktopLink, type DesktopAsk } from "../policy/desktoplink";
 import { LinkOutGate } from "../policy/linkout";
 import { externalTarget, isOerbaPage, navigationAllowed, openDecision, type NavPolicy, type Role } from "../policy/navigation";
 import { RefusalLog } from "../policy/refusals";
@@ -10,6 +11,8 @@ import { deviceAllowed, DEVICE_EVENTS, permissionAllowed } from "../policy/permi
 export const refusals = new RefusalLog(200);
 /** How a link leaves for the system browser. The self-test replaces it with a recorder; nothing else does. */
 export const external = { open: (url: string): void => { void shell.openExternal(url); } };
+/** What Oerba's own page asked of the app by its own scheme (src/policy/desktoplink.ts), once the gate let it: main sets it. */
+export const desktop = { devPanel: (_workspace: DesktopAsk["workspace"]): void => undefined };
 const gates = new Map<number, LinkOutGate>();
 const gateOf = (wc: WebContents): LinkOutGate => { let g = gates.get(wc.id); if (!g) { g = new LinkOutGate(); gates.set(wc.id, g); } return g; };
 const sameFrame = (a: WebFrameMain | null | undefined, b: WebFrameMain | null | undefined): boolean =>
@@ -92,6 +95,15 @@ export function installHardening(policy: NavPolicy): void {
     // Electron does not say which frame called window.open, so the frame holding the focus stands for it: a press in a
     // frame inside Oerba's page moves the focus there, and such a request is then dropped like any other from a frame.
     wc.setWindowOpenHandler(({ url }) => {
+      // The app's own scheme: what Oerba's own top frame may ask of the app, just after a press, under the link-out gate's rules.
+      const ask = desktopLink(url);
+      if (ask !== null) {
+        if (ask === "refused" || roleOf(wc) !== "oerba") { refusals.push("desktop:refused"); return { action: "deny" }; }
+        const verdict = gateOf(wc).decide(isOerbaTop(wc, wc.focusedFrame, policy), Date.now());
+        if (verdict === "open") desktop.devPanel(ask.workspace);
+        else refusals.push(`desktop:${verdict}`);
+        return { action: "deny" };
+      }
       const d = openDecision(url);
       if (d.external !== null) linkOut(wc, isOerbaTop(wc, wc.focusedFrame, policy), d.external);
       else refusals.push("open:refused");

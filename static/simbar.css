@@ -20,7 +20,7 @@
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body { margin: 0; background: var(--surface); color: var(--ink); font: 13px/1.4 var(--sans); -webkit-font-smoothing: antialiased; overflow: hidden; user-select: none; }
-header { height: 100%; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px; border-left: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+header { height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px; border-left: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
 .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 button.device { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 55%; border-color: transparent; padding: 3px 6px; }
 .caret { color: var(--muted); font-size: 11px; }
@@ -33,3 +33,18 @@ button { font: inherit; cursor: pointer; border-radius: var(--radius); border: 1
 button:hover { background: var(--sunk); }
 button.close { border-color: transparent; padding: 3px 8px; color: var(--ink2); }
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Below the bar, while the panel has no picture of the phone (it is starting, or could not, or serve-sim stopped): the bar's view
+   then fills the column, and this says what is under way, with a spinner while it is. A bar of its own height alone has no room for
+   it, and says it in the status instead. */
+main { display: none; }
+.spin { display: none; width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--rule); border-top-color: var(--accent); animation: spin 0.9s linear infinite; }
+body.loading .spin { display: block; }
+.note { margin: 0; max-width: 34ch; color: var(--ink2); font-size: 13px; line-height: 1.5; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; border-color: var(--accent-soft); border-top-color: var(--accent); } }
+@media (min-height: 80px) {
+  main { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; height: calc(100% - 36px); padding: 24px; text-align: center; background: var(--ground); border-left: 1px solid var(--rule); }
+  header:not(.busy) .status, header .status { display: none; }
+  header.busy .app { display: block; }
+}

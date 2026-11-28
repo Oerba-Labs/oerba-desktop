@@ -25,6 +25,8 @@ export interface PanelDeps {
   show(udid: string, name: string, ctx: PanelContext | null): Promise<void>;
   close(): Promise<void>;
   isOpen(): boolean;
+  /** Opens the panel at once, if it is closed, saying what is under way with its loading state (the device's name, if known). */
+  loading(status: string, device?: string | null): void;
   /** Says in the bar what is happening, or why not; nothing while the panel is closed. */
   say(status: string): void;
   /** The workspace and port it shows; null with no app, or closed. */
@@ -275,25 +277,32 @@ export class Presence {
     const say = (title: string, body: string): void => {
       for (const item of this.limiter.admit([{ title: clean(title, 60), body: clean(body, 200), route }], Date.now())) sink.show(item, () => this.d.openRoute(item.route));
     };
-    // From the panel's picker (a device named) the bar says how it goes, and a success is not notified: the panel shows it.
-    const picked = udid !== null;
+    // With the panel, it opens at once and says how it goes, and nothing is notified but the one tip: the panel is where it is seen.
+    // Without it (an app that has none), notifications say it, as before the panel.
+    const panel = this.d.panel;
     await this.simPress.run(async () => {
-      if (picked) this.d.panel?.say(`Opening on ${this.choices.get(udid.toUpperCase()) ?? "that device"}…`);
+      // The device asked for; else the one the panel shows, where the app is looked at; else the one last used for this workspace.
+      const shown = panel?.device() ?? null;
+      const remembered = this.d.memory.get(owner, name);
+      const preferred = udid ?? shown?.udid ?? remembered?.udid ?? null;
+      const deviceName = udid !== null ? this.choices.get(udid.toUpperCase()) ?? null : shown?.name ?? remembered?.name ?? null;
+      panel?.loading(clean(`Opening ${name}'s app${deviceName ? ` on ${deviceName}` : ""}…`, 120), deviceName);
       const f = await this.d.relay.tryStart(owner, name, port);
       this.render();
-      if ("why" in f) { say("Could not open the port", `${name}'s ${port}: ${f.why}`); if (picked) this.d.panel?.say("Could not open the port."); return; }
-      const panelled = this.d.panel !== undefined;
-      // The device asked for; else the one the panel shows, where the app is looked at; else the one last used for this workspace.
-      const preferred = udid ?? this.d.panel?.device()?.udid ?? this.d.memory.get(owner, name)?.udid ?? null;
-      const outcome = await openInSimulator(f.info.local, simulator.run, { window: !panelled, udid: preferred });
+      if ("why" in f) {
+        if (panel) panel.say(clean(`Could not open ${name}'s ${port}: ${f.why}.`, 120));
+        else say("Could not open the port", `${name}'s ${port}: ${f.why}`);
+        return;
+      }
+      const outcome = await openInSimulator(f.info.local, simulator.run, { window: !panel, udid: preferred });
       if (outcome.kind === "opened") {
         const seen = { udid: outcome.udid, name: clean(outcome.name, 60) || "iPhone" };
         this.d.memory.set(owner, name, seen);
         if (this.d.panel) { this.d.memory.setPanel(seen); await this.d.panel.show(outcome.udid, seen.name, { owner, name, remote: port }); }
       }
       const words = describe(outcome);
-      if (picked && outcome.kind !== "opened") this.d.panel?.say(`${words.title}.`);
-      if (!picked || outcome.kind !== "opened") say(words.title, words.body);
+      if (panel) { if (outcome.kind !== "opened") panel.say(clean(`${words.title}. ${words.body}`, 200)); }
+      else say(words.title, words.body);
       if (outcome.kind === "opened" && !this.hinted) {
         this.hinted = true;
         const h = expoHint();
@@ -339,7 +348,8 @@ export class Presence {
     if (ctx) { await this.openInSimulator(ctx.owner, ctx.name, ctx.remote, udid); return; }
     // No app in the panel: the device alone, booted if it must be, and shown.
     await this.simPress.run(async () => {
-      panel.say(`Opening ${this.choices.get(udid.toUpperCase()) ?? "that device"}…`);
+      const chosen = this.choices.get(udid.toUpperCase()) ?? null;
+      panel.loading(`Starting ${chosen ?? "that device"}…`, chosen);
       const r = await readyDevice(simulator.run, udid);
       if (r.kind !== "ready") { panel.say(`${describe({ kind: r.kind }).title}.`); return; }
       if (r.device.udid.toUpperCase() !== udid.toUpperCase()) { panel.say("That device is no longer on this Mac."); return; }
@@ -356,17 +366,29 @@ export class Presence {
     if (!panel) return;
     if (panel.isOpen()) { await panel.close(); this.render(); return; }
     await this.simPress.run(async () => {
-      const r = await readyDevice(simulator.run, this.d.memory.getPanel()?.udid ?? null);
-      if (r.kind !== "ready") {
-        const words = describe({ kind: r.kind });
-        for (const item of this.limiter.admit([{ title: clean(words.title, 60), body: clean(words.body, 200), route: "#/" }], Date.now())) sink.show(item, () => this.d.openRoute(item.route));
-        return;
-      }
+      // The panel opens at once, saying what is under way; a boot can take a minute.
+      const last = this.d.memory.getPanel();
+      panel.loading(`Starting ${last?.name ?? "a simulator"}…`, last?.name ?? null);
+      const r = await readyDevice(simulator.run, last?.udid ?? null);
+      if (r.kind !== "ready") { const words = describe({ kind: r.kind }); panel.say(clean(`${words.title}. ${words.body}`, 200)); return; }
       const seen = { udid: r.device.udid, name: clean(r.device.name, 60) || "iPhone" };
       this.d.memory.setPanel(seen);
       await panel.show(seen.udid, seen.name, null);
     });
     this.render();
+  }
+
+  /** The Dev Panel button of Oerba's page (src/policy/desktoplink.ts), pressed in a workspace's room or elsewhere: closes the panel
+      while it is open; otherwise opens, in the panel, the app of the workspace named, when it is one of the person's own running
+      workspaces and its Metro was listening at the last read, and else the panel alone, as the menus' Dev Panel does. */
+  async devPanelFrom(ws: { owner: string; name: string } | null): Promise<void> {
+    const panel = this.d.panel;
+    if (!panel) return;
+    if (panel.isOpen()) { await panel.close(); this.render(); return; }
+    const w = ws ? this.now?.workspaces.find((x) => x.status === "running" && wsKey(x.owner, x.name) === wsKey(ws.owner, ws.name)) : undefined;
+    const port = w ? METRO_PORTS.find((p) => this.listening.get(wsKey(w.owner, w.name))?.includes(p)) : undefined;
+    if (w && port !== undefined) { await this.openInSimulator(w.owner, w.name, port); return; }
+    await this.toggleDevPanel();
   }
 
   /** The relay's list changed (a forward started, stopped or ended with its workspace): the menu is drawn again. */

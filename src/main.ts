@@ -23,7 +23,8 @@ import { UpdateWindow } from "./update/window";
 import type { PresentFetch } from "./present/fetch";
 import { RelayManager } from "./relay/manager";
 import { loopbackUpstream, ONDEMAND } from "./relay/rules";
-import { external, installHardening, setRole } from "./shell/hardening";
+import { desktop, external, installHardening, setRole } from "./shell/hardening";
+import { desktopToken, devPanelStateJs } from "./policy/desktoplink";
 import { SimPanel } from "./sim/panel";
 import { DeviceMemory } from "./sim/remember";
 import { onDemandPorts } from "./present/ports";
@@ -158,12 +159,23 @@ function showOerba(): void {
   oerbaView = new WebContentsView({ webPreferences: { ...SAFE } });
   const wc = oerbaView.webContents;
   setRole(wc, "oerba");
+  // The app names itself to Oerba's page, which then draws its Dev Panel button (src/policy/desktoplink.ts).
+  wc.setUserAgent(`${wc.getUserAgent()} ${desktopToken(app.getVersion())}`);
+  wc.on("did-finish-load", tellPage);
   win.contentView.addChildView(oerbaView);
   fit(oerbaView);
   // If Oerba cannot be reached after all (the tailnet dropped), the setup screen says what is missing.
   wc.on("did-fail-load", (_e, _code, _desc, _url, isMainFrame) => { if (isMainFrame) showSetup(); });
   void wc.loadURL(`${config.oerbaOrigin}/`);
   presence?.setIn();
+}
+
+/** Tells Oerba's page whether the dev panel is open, so that its Dev Panel button shows it: one of two fixed scripts, run only in a
+    page of Oerba's own, which holds nothing the page or a workspace said. */
+function tellPage(): void {
+  const wc = oerbaView?.webContents;
+  if (!wc || wc.isDestroyed() || wc.isLoading() || !isOerbaPage(wc.mainFrame.url, policy)) return;
+  void wc.mainFrame.executeJavaScript(devPanelStateJs(panel?.open ?? false)).catch(() => undefined);
 }
 
 function showWindow(): void {
@@ -239,8 +251,10 @@ app.whenReady().then(() => {
   squirrel.on("error", () => { restartingForUpdate = false; });
   serveBundled(__dirname);
   installHardening(policy);
+  // Oerba's own page asked, by the app's own scheme, just after a press (the window handler held it to that).
+  desktop.devPanel = (workspace) => { void presence?.devPanelFrom(workspace); };
   panel = new SimPanel(policy, SAFE, {
-    window: () => win, relayout, choose: () => { void presence?.chooseDevice(); }, changed: () => { presence?.redraw(); },
+    window: () => win, relayout, choose: () => { void presence?.chooseDevice(); }, changed: () => { presence?.redraw(); tellPage(); },
     refuse: () => (app.isPackaged && !app.isInApplicationsFolder() ? "Move Oerba to Applications, open it from there, and press Open in iOS Simulator again." : null),
   });
   // Which device each workspace was last opened on: a file of the app's own, or, for the self-test, one in a scratch folder, so
@@ -251,6 +265,7 @@ app.whenReady().then(() => {
   const devPanel = {
     show: (udid: string, name: string, ctx: { owner: string; name: string; remote: number } | null) => { showWindow(); return panel ? panel.show(udid, name, ctx) : Promise.resolve(); },
     close: () => panel?.close() ?? Promise.resolve(),
+    loading: (status: string, device?: string | null) => { showWindow(); panel?.loading(status, device ?? null); },
     isOpen: () => panel?.open ?? false,
     say: (status: string) => panel?.say({ status }),
     context: () => panel?.context ?? null,

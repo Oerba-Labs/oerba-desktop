@@ -40,7 +40,7 @@ export interface PanelHooks {
 /** What the panel shows: a workspace's Metro port, by the workspace's owner and name and the port's number in the workspace. */
 export interface PanelContext { owner: string; name: string; remote: number }
 
-export interface BarState { device: string; app: string; status: string }
+export interface BarState { device: string; app: string; status: string; loading: boolean }
 
 /** What the bar says while the panel shows a device and no app (it was opened on its own, from the menus' Dev Panel). */
 export const NO_APP = "Start Metro in a workspace to open its app here";
@@ -50,7 +50,9 @@ export class SimPanel {
   private preview: WebContentsView | null = null;
   private udid: string | null = null;
   private ctx: PanelContext | null = null;
-  private state: BarState = { device: "iPhone", app: "", status: "" };
+  private state: BarState = { device: "iPhone", app: "", status: "", loading: false };
+  /** Whether serve-sim's page has loaded in the preview: until it has, the bar fills the column and says what is happening. */
+  private previewReady = false;
 
   /** What the bar says now: its device's name, the workspace and app, and what the panel is doing or why it is not showing it. */
   get status(): BarState { return this.state; }
@@ -90,31 +92,22 @@ export class SimPanel {
   async show(udid: string, name: string, ctx: PanelContext | null): Promise<void> {
     const win = this.hooks.window();
     if (!win) return;
-    const wasOpen = this.bar !== null;
     this.udid = udid;
     this.ctx = ctx;
     const idle = ctx ? "" : NO_APP;
-    if (this.bar && this.preview && this.server.alive && this.server.running?.udid === udid) { this.put({ device: name, status: idle }); return; }
+    if (this.bar && this.preview && this.previewReady && this.server.alive && this.server.running?.udid === udid) { this.put({ device: name, status: idle, loading: false }); return; }
     // A preview of another device, or of a serve-sim no longer running, goes first: its origin is allowed no longer.
     if (this.server.running?.udid !== udid) this.dropPreview();
     const refused = this.hooks.refuse();
-    this.put({ device: name, status: refused ?? "Starting…" });
-    if (!this.bar) {
-      this.bar = new WebContentsView({ webPreferences: { ...this.safe, preload: path.join(__dirname, "preload-simbar.js") } });
-      setRole(this.bar.webContents, "simbar");
-      win.contentView.addChildView(this.bar);
-      void this.bar.webContents.loadURL(this.policy.simbarUrl);
-    }
-    this.layout();
-    this.hooks.relayout();
-    if (!wasOpen) this.hooks.changed();
+    this.put({ device: name, status: refused ?? "Starting the panel…", loading: refused === null });
+    this.openBar(win);
     if (refused !== null) return;
     const started = await this.server.start(udid);
     // Closed while it started: whatever started is stopped, so that nothing runs, or stays armed in the simulator, without a panel.
     if (this.udid !== udid || !this.bar) { await this.server.stop(); return; }
     if ("why" in started) {
       this.dropPreview();
-      this.put({ device: name, status: `Could not start: ${started.why}.` });
+      this.put({ device: name, status: `Could not start: ${started.why}.`, loading: false });
       return;
     }
     this.policy.simOrigin = started.origin;
@@ -124,9 +117,43 @@ export class SimPanel {
       setRole(this.preview.webContents, "simulator");
       win.contentView.addChildView(this.preview);
     }
+    // Hidden until its page has loaded (or ten seconds have passed), the bar's loading state showing meanwhile.
+    const preview = this.preview;
+    this.previewReady = false;
     this.layout();
-    void this.preview.webContents.loadURL(previewUrl(started.port, started.token));
-    this.put({ device: name, status: idle });
+    this.put({ device: name, status: "Loading the phone…", loading: true });
+    const reveal = (): void => {
+      if (this.preview !== preview || this.previewReady) return;
+      this.previewReady = true;
+      this.layout();
+      this.put({ device: name, status: idle, loading: false });
+    };
+    preview.webContents.once("did-finish-load", reveal);
+    setTimeout(reveal, 10_000).unref?.();
+    void preview.webContents.loadURL(previewUrl(started.port, started.token)).catch(() => undefined);
+  }
+
+  /** Opens the column, if it is not open, with the bar alone, which fills it until a preview has loaded. */
+  private openBar(win: BrowserWindow): void {
+    const opening = this.bar === null;
+    if (!this.bar) {
+      this.bar = new WebContentsView({ webPreferences: { ...this.safe, preload: path.join(__dirname, "preload-simbar.js") } });
+      setRole(this.bar.webContents, "simbar");
+      win.contentView.addChildView(this.bar);
+      void this.bar.webContents.loadURL(this.policy.simbarUrl);
+    }
+    this.layout();
+    this.hooks.relayout();
+    if (opening) this.hooks.changed();
+  }
+
+  /** Opens the panel at once, if it is not open, saying what is under way (a simulator starting, an app opening) with the loading
+      state, before the device is ready; show() follows, or say() with why not. */
+  loading(status: string, device: string | null = null): void {
+    const win = this.hooks.window();
+    if (!win) return;
+    this.openBar(win);
+    this.put({ ...(device ? { device } : {}), status, loading: true });
   }
 
   /** Lays the bar and the preview out in the right-hand column of the window. */
@@ -135,14 +162,16 @@ export class SimPanel {
     if (!win || !this.bar) return;
     const [width = 0, height = 0] = win.getContentSize();
     const w = panelWidth(width);
-    this.bar.setBounds({ x: width - w, y: 0, width: w, height: BAR_HEIGHT });
+    // The bar fills the column until a preview has loaded: its page then shows the loading state, or why the panel is empty.
+    this.bar.setBounds({ x: width - w, y: 0, width: w, height: this.preview && this.previewReady ? BAR_HEIGHT : height });
     this.preview?.setBounds({ x: width - w, y: BAR_HEIGHT, width: w, height: Math.max(0, height - BAR_HEIGHT) });
+    this.preview?.setVisible(this.previewReady);
   }
 
   /** Says what the panel is doing (a device starting) or why it did not, in the bar. Nothing while it is closed. */
   say(s: Partial<BarState>): void {
     if (!this.bar) return;
-    this.put(s);
+    this.put({ loading: false, ...s });
   }
 
   /** Pops the device picker just under the bar's device button. */
@@ -173,6 +202,7 @@ export class SimPanel {
   /** The preview goes, and with it the origin it was allowed. */
   private dropPreview(): void {
     this.policy.simOrigin = null;
+    this.previewReady = false;
     const v = this.preview;
     this.preview = null;
     if (!v) return;
@@ -185,7 +215,8 @@ export class SimPanel {
       that port is shown; the bar stays and says so. */
   private lost(): void {
     this.dropPreview();
-    if (this.bar) this.put({ status: this.ctx ? "The panel's helper stopped. Open in iOS Simulator starts it again." : "The panel's helper stopped. Close the panel and choose Dev Panel to start it again." });
+    this.layout();
+    if (this.bar) this.put({ loading: false, status: this.ctx ? "The panel's helper stopped. Open in iOS Simulator starts it again." : "The panel's helper stopped. Close the panel and choose Dev Panel to start it again." });
   }
 
   /** Records what the bar says, the workspace and app always from the panel's context, and sends it to the bar if it is there. */

@@ -12,7 +12,7 @@ import type { Idle } from "./update/decide";
 import type { UpdateWindow } from "./update/window";
 import { sink } from "./present/presence";
 import type { Item } from "./present/notify";
-import { external, refusals, setRole } from "./shell/hardening";
+import { desktop, external, refusals, setRole } from "./shell/hardening";
 import { simulator, type Runner } from "./sim/run";
 import type { SimPanel } from "./sim/panel";
 import { panelWidth } from "./sim/serve";
@@ -58,6 +58,10 @@ export async function runSelftest(h: Hooks): Promise<void> {
   const notes: Item[] = [];
   const noteClicks = new Map<Item, () => void>();
   sink.show = (item, onClick) => { notes.push(item); noteClicks.set(item, onClick); };
+  // What Oerba's page asks of the app by its own scheme is recorded, never acted on, in this run alone: acted on, it would boot a
+  // simulator of this Mac's. The presence's own entry point is checked with stand-ins, in 4g.
+  const desktopAsks: unknown[] = [];
+  desktop.devPanel = (workspace) => { desktopAsks.push(workspace); };
   const watchdog = setTimeout(() => { console.log("FAIL smoke run timed out"); h.dropScratch(); app.exit(1); }, 60_000);
   try {
     const other = h.config.otherOrigin;
@@ -201,6 +205,11 @@ export async function runSelftest(h: Hooks): Promise<void> {
         await first;
         check("a booted device was used and nothing booted, and Device Hub was not opened (the panel shows the phone)", !!f && !calls.some((c) => c.startsWith("/usr/bin/open ")) && calls.includes(`/usr/bin/xcrun simctl get_app_container ${SIM} host.exp.Exponent`) && !calls.some((c) => c.includes("simctl boot")), calls.join(" | "));
         check("Expo Go missing: the address was not opened", !!f && !calls.some((c) => c.includes("openurl")), calls.join(" | "));   // what is said is the unit tests': the limiter here has no room left
+        // The press opened the panel at once (0.6.2), and the panel, not a notification, says why the app was not opened; no serve-sim
+        // was started for it, since nothing was opened. Closed here, for 4g's own press.
+        const said = h.getPanel()?.status;
+        check("the press opened the panel at once, which says Expo Go is missing", h.getPanel()?.open === true && said?.loading === false && /Expo Go/.test(said?.status ?? ""), JSON.stringify(said));
+        await h.getPanel()?.close();
         const c0 = calls.length;
         await presence.openInSimulator("alice", "demo", 8000);
         check("a press for a web port ran nothing and started no forward", calls.length === c0 && !h.getRelay().list().some((x) => x.remote === 8000));
@@ -222,7 +231,10 @@ export async function runSelftest(h: Hooks): Promise<void> {
       const realRun = simulator.run;
       const SIM = "5E5E5E5E-0000-4000-8000-5E5E5E5E5E5E";
       const SIM2 = "6F6F6F6F-0000-4000-8000-6F6F6F6F6F6F";
+      // While `hold` is set, the device list waits for it: a press is caught under way, to see the panel's loading state.
+      let hold: Promise<void> | null = null;
       simulator.run = async (file, args) => {
+        if (hold && args.join(" ") === "simctl list devices --json") await hold;
         calls.push([file, ...args].join(" "));
         if (args.join(" ") === "simctl list devices --json") return { code: 0, stdout: JSON.stringify({ devices: { "com.apple.CoreSimulator.SimRuntime.iOS-26-5": [{ udid: SIM, isAvailable: true, deviceTypeIdentifier: "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro", state: "Booted", name: "iPhone 17 Pro" }, { udid: SIM2, isAvailable: true, deviceTypeIdentifier: "com.apple.CoreSimulator.SimDeviceType.iPhone-17", state: "Shutdown", name: "iPhone 17" }] } }) };
         return { code: 0, stdout: "" };
@@ -280,8 +292,14 @@ export async function runSelftest(h: Hooks): Promise<void> {
         await presence.toggleDevPanel();
         check("Dev Panel opened the panel on the device it last showed, with no app, and opened nothing in it", panel.open && panel.device === SIM2 && panel.context === null && started.slice(s3).join() === SIM2 && !calls.slice(c3).some((c) => c.includes(" openurl ") || c.includes(" get_app_container ")), `${started.slice(s3).join()} ${calls.slice(c3).join(" | ")}`);
         check("and Dev Panel is ticked", devTick() === true);
-        // A new bar, loaded: the closed one may still be going away, with the same address, and would never run a script.
-        const bar2 = await until("the panel's bar again", () => webContents.getAllWebContents().find((w) => w.id !== bar.id && !w.isDestroyed() && !w.isLoading() && w.getURL() === h.policy.simbarUrl));
+        // A new bar, loaded: a closed one may still be going away, with the same address, and would never run a script.
+        const seenBars = new Set<number>([bar.id]);
+        const nextBar = async (what: string): Promise<Electron.WebContents> => {
+          const b = await until(what, () => webContents.getAllWebContents().find((w) => !seenBars.has(w.id) && !w.isDestroyed() && !w.isLoading() && w.getURL() === h.policy.simbarUrl));
+          seenBars.add(b.id);
+          return b;
+        };
+        const bar2 = await nextBar("the panel's bar again");
         check("the bar names the device and no app", await bar2.executeJavaScript("document.getElementById('name').textContent + '|' + document.getElementById('app').textContent") === "iPhone 17|");
         const items2 = await presence.deviceMenu();
         check("the picker works with no app", (items2 ?? []).some((m) => m.checked === true && m.label.startsWith("iPhone 17")), (items2 ?? []).map((m) => `${m.label}${m.checked ? " (ticked)" : ""}`).join(" | "));
@@ -293,6 +311,43 @@ export async function runSelftest(h: Hooks): Promise<void> {
         check("a press opens the app on the device the panel shows", calls.slice(c5).some((c) => opened(c, SIM)) && panel.context?.name === "demo", calls.slice(c5).join(" | "));
         await presence.toggleDevPanel();
         check("Dev Panel again closed the panel, and is unticked", !panel.open && devTick() === false && oerba.getBounds().width === W);
+        // The loading state (0.6.2): the panel opens at once, before the device is ready, its bar filling the column with what is under
+        // way, and gives way to why when it cannot start. Oerba's page is told the panel's state by the app's fixed event.
+        await oerba.webContents.executeJavaScript("window.__dp = []; window.addEventListener('oerba-desktop', (e) => window.__dp.push(e.detail.devPanel)); 1");
+        let release: () => void = () => undefined;
+        hold = new Promise<void>((r) => { release = r; });
+        const opening = presence.toggleDevPanel();
+        await until("the panel opened at once", () => panel.open);
+        const bar3 = await nextBar("the loading panel's bar");
+        await until("its loading state drawn", async () => (await bar3.executeJavaScript("document.body.classList.contains('loading')")) === true);
+        const [, H = 0] = win.getContentSize();
+        const loadingSays = await bar3.executeJavaScript("document.getElementById('note').textContent + '|' + innerHeight + '|' + getComputedStyle(document.querySelector('.spin')).display");
+        check("the panel opened at once, before the device was ready, in its loading state, its bar filling the column", loadingSays === `Starting iPhone 17 Pro…|${H}|block`, String(loadingSays));
+        release();
+        hold = null;
+        await opening;
+        await until("the loading state gave way", async () => (await bar3.executeJavaScript("document.body.classList.contains('loading')")) === false);
+        check("unable to start, the loading state gave way to why", await bar3.executeJavaScript("document.getElementById('note').textContent") === "Could not start: a stand-in starts nothing.");
+        check("Oerba's page was told the panel is open", JSON.stringify(await oerba.webContents.executeJavaScript("window.__dp")) === "[true]", JSON.stringify(await oerba.webContents.executeJavaScript("window.__dp")));
+        await presence.devPanelFrom(null);
+        check("Oerba's Dev Panel button closes an open panel, and the page was told", !panel.open && JSON.stringify(await oerba.webContents.executeJavaScript("window.__dp")) === "[true,false]");
+        // The button in a workspace's room: that workspace's app when its Metro listens; the panel alone when it does not, or when the
+        // workspace is not one of the person's own running ones.
+        presence.listening = new Map([["alice/demo", [8081]], ["bob/other", [8081]]]);
+        const c6 = calls.length;
+        await presence.devPanelFrom({ owner: "alice", name: "demo" });
+        check("the button in a room whose Metro listens opened that app in the panel", panel.open && panel.context?.name === "demo" && calls.slice(c6).some((c) => opened(c, SIM)), calls.slice(c6).join(" | "));
+        await presence.devPanelFrom({ owner: "alice", name: "demo" });
+        const c7 = calls.length;
+        await presence.devPanelFrom({ owner: "bob", name: "other" });
+        check("for a workspace not the person's, the panel alone, nothing opened in it", panel.open && panel.context === null && !calls.slice(c7).some((c) => c.includes(" openurl ")), calls.slice(c7).join(" | "));
+        await presence.devPanelFrom(null);
+        presence.listening = new Map();
+        const c8 = calls.length;
+        await presence.devPanelFrom({ owner: "alice", name: "demo" });
+        check("for a room whose Metro is not listening, the panel alone", panel.open && panel.context === null && !calls.slice(c8).some((c) => c.includes(" openurl ")), calls.slice(c8).join(" | "));
+        await presence.devPanelFrom(null);
+        check("and closed again", !panel.open);
         await h.getRelay().stopAll();
         notes.length = 0;
       } finally {
@@ -399,6 +454,7 @@ export async function runSelftest(h: Hooks): Promise<void> {
       await until("the gate page", () => oerba.webContents.getURL() === `${h.policy.oerbaOrigin}/gate`);
       await sleep(1500);   // the frame inside the page tries window.open and window.top.location, three times each
       check("a frame inside Oerba's page opened nothing in the browser", opened.length === 0, opened.join(" "));
+      check("nor asked anything of the app by its own scheme", desktopAsks.length === 0 && (refusals.has("desktop:origin") || refusals.has("desktop:gesture")), refusals.list.slice(-8).join(" "));
       check("and its attempts were recorded as refused", refusals.has("linkout:origin") || refusals.has("navigate:main"), refusals.list.slice(-6).join(" "));
 
       const before2 = opened.length;
@@ -435,6 +491,16 @@ export async function runSelftest(h: Hooks): Promise<void> {
       await click("same");
       check("a click on a link out of Oerba's own page opened the browser, and the page stayed", opened.includes("https://example.invalid/click-same") && oerba.webContents.getURL() === `${h.policy.oerbaOrigin}/gate`, opened.join(" "));
       check("each press opened one link", opened.length === 2, String(opened.length));
+      // Oerba's Dev Panel button: a press on it in Oerba's own page asks the app, once, naming the room's workspace; it opens nothing
+      // in the browser. A script's ask with no press, and an ask not of the shape, are refused.
+      await click("devpanel");
+      check("a press on Oerba's Dev Panel button asked the app, naming the workspace, and opened nothing in the browser", JSON.stringify(desktopAsks) === JSON.stringify([{ owner: "alice", name: "demo" }]) && opened.length === 2, JSON.stringify(desktopAsks));
+      await sleep(2200);
+      await oerba.webContents.executeJavaScript("window.open('oerba-desktop:dev-panel')");
+      await oerba.webContents.executeJavaScript("window.open('oerba-desktop:dev-panel?workspace=..%2Fx')");
+      await sleep(300);
+      check("an ask with no press, and one not of the shape, were refused", desktopAsks.length === 1 && refusals.has("desktop:gesture") && refusals.has("desktop:refused"), refusals.list.slice(-6).join(" "));
+      check("Oerba's page sees the app's name in its User-Agent", /\bOerbaDesktop\/\d+\.\d+\.\d+\b/.test(String(await oerba.webContents.executeJavaScript("navigator.userAgent"))));
     } finally {
       external.open = realOpen;
     }

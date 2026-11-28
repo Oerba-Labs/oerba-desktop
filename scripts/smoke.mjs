@@ -30,8 +30,10 @@ const oerba = createServer((req, res) => {
     res.writeHead(200, { "content-type": "text/html" }).end(`<!doctype html><title>gate</title>
 <p><a id="blank" target="_blank" href="https://example.invalid/click-blank">new window</a></p>
 <p><a id="same" href="https://example.invalid/click-same">same frame</a></p>
+<p><button id="devpanel" type="button">Dev Panel</button></p>
 <iframe src="/sub" width="200" height="60"></iframe>
-<script>document.addEventListener("keydown", (e) => { if (e.metaKey && e.key === "k") window.__k = (window.__k || 0) + 1; });</script>`);
+<script>document.addEventListener("keydown", (e) => { if (e.metaKey && e.key === "k") window.__k = (window.__k || 0) + 1; });
+document.getElementById("devpanel").addEventListener("click", () => window.open("oerba-desktop:dev-panel?workspace=alice%2Fdemo"));</script>`);
     return;
   }
   if (req.url === "/sub") {
@@ -39,7 +41,7 @@ const oerba = createServer((req, res) => {
     res.writeHead(200, { "content-type": "text/html" }).end(`<!doctype html><script>
 document.addEventListener("keydown", (e) => { if (e.metaKey && e.key === "k") window.__k = (window.__k || 0) + 1; });
 for (let i = 0; i < 3; i++) {
-  setTimeout(() => { try { window.open("https://example.invalid/sub-open"); } catch {} try { window.top.location = "https://example.invalid/sub-top"; } catch {} }, 100 * i);
+  setTimeout(() => { try { window.open("https://example.invalid/sub-open"); } catch {} try { window.open("oerba-desktop:dev-panel?workspace=alice%2Fdemo"); } catch {} try { window.top.location = "https://example.invalid/sub-top"; } catch {} }, 100 * i);
 }</script>sub`);
     return;
   }
