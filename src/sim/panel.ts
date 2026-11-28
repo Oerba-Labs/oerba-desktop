@@ -140,7 +140,9 @@ export class SimPanel {
     const fail = (_e: unknown, code: number, _what: string, _url: string, mainFrame: boolean): void => {
       if (!current() || !mainFrame || code === -3) return;   // -3: a load given up for another, which says nothing
       failed = true;
-      this.clearReveal();
+      // The preview goes, and its origin with it, rather than waiting hidden for the panel to close.
+      this.dropPreview();
+      this.layout();
       this.put({ device: name, status: "Could not load the phone's picture. Close the panel and open it again.", loading: false });
     };
     preview.webContents.once("did-finish-load", reveal);

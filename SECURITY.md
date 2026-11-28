@@ -14,7 +14,9 @@ only wires them in.
   Oerba draws a Dev Panel button, and its press opens `oerba-desktop:dev-panel?key=<key>`, with at most `&workspace=<owner>/<name>` in On-Demand's own pattern. The key is
   128 random bits made at each start of the app, given only to the top frame of a page of Oerba's own (below). Electron does not say which frame called `window.open`, and a
   workspace's frame inside Oerba's page can take the focus (`top.focus()`) or call just after the person pressed something in Oerba's own page, so neither the focus nor the
-  press can tell Oerba's page from a frame in it; the key can, since a frame of another origin cannot read the top frame's script. The window handler takes the address before
+  press can tell Oerba's page from a frame in it; the key can, since a frame of another origin cannot read the top frame's script. That
+  rests on Oerba: its page refuses to be framed (`frame-ancestors 'none'`) and frames workspaces only from other origins, so no frame
+  inside it is of its origin; were either to change, the key would be readable by that frame. The window handler takes the address before
   the link-out rules: an address of the scheme not of that shape, or from any view but Oerba's, or without this run's key, is refused and recorded; one with it is then taken
   only under the link-out gate (below), just after a key or mouse press in the window, one for each press, a few a minute. It opens or closes the dev panel as the menus' Dev
   Panel does, and, for a workspace named that is one of the person's own running workspaces and whose Metro the last read of On-Demand saw listening, opens its app in the
