@@ -41,7 +41,7 @@ You need to be on the tailnet as for Oerba itself; the relay holds no credential
 
 If the app still fetches its bundle from the workspace's long name or over `https`, the project's Expo is older than SDK 58: that name answers from this Mac too (tailnet), but without the relay's checks.
 
-**Open in iOS Simulator (an Expo app).** On a workspace's Metro ports (8081 and 19000) the menu bar item and the Dock menu also offer **Open 8081 in iOS Simulator**. When Metro starts listening in one of your workspaces while Oerba is open, a notification offers the same: **demo's app is running**, *Open it on iPhone 17 Pro*, and a click opens it. One press does the following, in order, and stops at the first thing that is missing:
+**Open in iOS Simulator (an Expo app).** On a workspace's Metro ports (8081 and 19000) the menu bar item and the Dock menu also offer **Open 8081 in iOS Simulator**. When Metro starts listening in one of your workspaces while Oerba is open, a notification offers the same: **demo's app is running**, *Open it on iPhone 17 Pro*, and a click opens it on that device, in the dev panel, in place of whatever the panel was showing. A click after Metro has stopped only says so. Each workspace has at most one such notification in five minutes. One press does the following, in order, and stops at the first thing that is missing:
 
 1. Starts the forward of that port if it is not running, and uses the number it took.
 2. Checks that Xcode is installed (read only). If not, it says so: install Xcode from the App Store, open it once and let it install the iOS platform. Oerba installs nothing.

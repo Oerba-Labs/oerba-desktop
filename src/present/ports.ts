@@ -75,6 +75,24 @@ export interface PortMemory { primed: boolean; metro: Map<string, Set<number>> }
 
 export const freshPortMemory = (): PortMemory => ({ primed: false, metro: new Map() });
 
+/** The least time between two offers for one workspace: Metro restarting, or a workspace's code opening and closing the port, is
+    not an offer each time. */
+export const OFFER_COOLDOWN_MS = 5 * 60_000;
+
+/** The offers that may be made now: one a workspace, and none for a workspace offered within the cooldown. `last` is when each
+    workspace was last offered, by wsKey, and is brought up to date; entries older than the cooldown are let go. */
+export function admitOffers(offers: readonly Offer[], last: Map<string, number>, now: number, coolMs = OFFER_COOLDOWN_MS): Offer[] {
+  for (const [k, at] of last) if (now - at >= coolMs) last.delete(k);
+  const out: Offer[] = [];
+  for (const o of offers) {
+    const k = wsKey(o.owner, o.name);
+    if (last.has(k)) continue;
+    last.set(k, now);
+    out.push(o);
+  }
+  return out;
+}
+
 /** How a workspace's ports are kept: by owner and name, without regard to case. */
 export const wsKey = (owner: string, name: string): string => `${owner.toLowerCase()}/${name.toLowerCase()}`;
 

@@ -245,9 +245,8 @@ app.whenReady().then(() => {
   });
   // Which device each workspace was last opened on: a file of the app's own, or, for the self-test, one in a scratch folder, so
   // that a run never touches the person's.
-  const scratch = config.selftest ? mkdtempSync(path.join(tmpdir(), "oerba-selftest-")) : null;
-  const dropScratch = (): void => { if (scratch) rmSync(scratch, { recursive: true, force: true }); };
-  app.on("will-quit", dropScratch);
+  const scratch = __SELFTEST__ && config.selftest ? mkdtempSync(path.join(tmpdir(), "oerba-selftest-")) : null;
+  if (__SELFTEST__ && scratch) app.on("will-quit", () => { rmSync(scratch, { recursive: true, force: true }); });
   const memory = new DeviceMemory(path.join(scratch ?? app.getPath("userData"), "devices.json"));
   const devPanel = {
     show: (udid: string, name: string, ctx: { owner: string; name: string; remote: number }) => { showWindow(); return panel ? panel.show(udid, name, ctx) : Promise.resolve(); },
@@ -266,7 +265,7 @@ app.whenReady().then(() => {
   showSetup();
   if (__SELFTEST__ && config.selftest) {
     // Loaded only for an unpackaged app given --selftest (config.ts): the self-test is not in the packaged code path.
-    void import("./selftest").then((m) => m.runSelftest({ config, policy, getWin: () => win, getSetup: () => setupView, getOerba: () => oerbaView, getPresence: () => presence, getUpdater: () => updater, getRelay: () => relay, openPalette, getUpdateWindow: () => updateWindow, setEngine: (e) => { testEngine = e; }, setIdle: (i) => { testIdle = i; }, SAFE, fit, getPanel: () => panel, dropScratch }));
+    void import("./selftest").then((m) => m.runSelftest({ config, policy, getWin: () => win, getSetup: () => setupView, getOerba: () => oerbaView, getPresence: () => presence, getUpdater: () => updater, getRelay: () => relay, openPalette, getUpdateWindow: () => updateWindow, setEngine: (e) => { testEngine = e; }, setIdle: (i) => { testIdle = i; }, SAFE, fit, getPanel: () => panel, dropScratch: () => { if (scratch) rmSync(scratch, { recursive: true, force: true }); } }));
   }
   app.on("activate", () => { if (!win) { win = createWindow(); showSetup(); } else showWindow(); });
 });

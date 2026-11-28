@@ -1,11 +1,12 @@
-/* A GET of a JSON object from Oerba, held to a timeout, no redirects, a size cap and an object or nothing. */
+/* A GET of a JSON object from Oerba or On-Demand, held to a timeout, no redirects, a size cap and an object or nothing, and sent with
+   no credential of the session's (no cookie, no stored login): both know the person by their tailnet address alone. */
 
 export interface PresentResponse { status: number; body: ReadableStream<Uint8Array> | null }
-export type PresentFetch = (url: string, init: { signal: AbortSignal; redirect: "manual"; headers: Record<string, string> }) => Promise<PresentResponse>;
+export type PresentFetch = (url: string, init: { signal: AbortSignal; redirect: "manual"; credentials: "omit"; headers: Record<string, string> }) => Promise<PresentResponse>;
 
 export async function getJsonObject(fetchFn: PresentFetch, url: string, timeoutMs = 8000, maxBytes = 2_000_000): Promise<Record<string, unknown> | null> {
   try {
-    const res = await fetchFn(url, { signal: AbortSignal.timeout(timeoutMs), redirect: "manual", headers: { accept: "application/json" } });
+    const res = await fetchFn(url, { signal: AbortSignal.timeout(timeoutMs), redirect: "manual", credentials: "omit", headers: { accept: "application/json" } });
     if (res.status !== 200 || res.body === null) return null;
     const reader = res.body.getReader();
     const chunks: Uint8Array[] = [];

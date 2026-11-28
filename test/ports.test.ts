@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { agentId, freshPortMemory, MAX_PORTS, metroOffers, ONDEMAND_API, onDemandPorts, parsePorts, workspaceUrl, type Reading } from "../src/present/ports";
+import { admitOffers, agentId, freshPortMemory, MAX_PORTS, metroOffers, OFFER_COOLDOWN_MS, ONDEMAND_API, onDemandPorts, parsePorts, workspaceUrl, type Reading } from "../src/present/ports";
 import type { PresentFetch } from "../src/present/fetch";
 import { buildMenu, labelsOf } from "../src/present/menu";
 import type { NowModel } from "../src/present/now";
@@ -39,6 +39,7 @@ test("the reader asks for the workspace, then its agent's ports, and says null w
   const fetchFn: PresentFetch = async (url, init) => {
     asked.push(url);
     assert.equal(init.redirect, "manual");
+    assert.equal(init.credentials, "omit", "no cookie or stored login goes with a read");
     const body = answers.get(url);
     if (body === undefined) return { status: 404, body: null };
     return { status: 200, body: new Response(JSON.stringify(body)).body };
@@ -80,4 +81,16 @@ test("the menu offers the ports a workspace listens on when On-Demand has said, 
   assert.ok(labels.includes("    Open on localhost:5173") && labels.includes("    Open 19000 in iOS Simulator"), "a workspace not read is offered the usual ports");
   const quiet = labelsOf(buildMenu({ inOerba: true, now, loginItem: false, paletteKey: true, chatKey: true, update: null, listening: new Map([["alice/demo", []]]) }));
   assert.deepEqual(quiet.slice(quiet.indexOf("  demo"), quiet.indexOf("  web")), ["  demo", "    Open in Oerba"], "nothing listening, nothing offered");
+});
+
+test("an offer is made once a workspace in five minutes, whatever its code does with the port", () => {
+  const last = new Map<string, number>();
+  const demo = { owner: "alice", name: "demo", port: 8081 };
+  assert.deepEqual(admitOffers([demo, { ...demo, port: 19000 }, { owner: "alice", name: "web", port: 8081 }], last, 0), [demo, { owner: "alice", name: "web", port: 8081 }], "one a workspace");
+  assert.deepEqual(admitOffers([demo], last, OFFER_COOLDOWN_MS - 1), [], "not again within the cooldown");
+  assert.deepEqual(admitOffers([{ owner: "Alice", name: "Demo", port: 19000 }], last, 1000), [], "the workspace's case does not matter");
+  assert.deepEqual(admitOffers([demo], last, OFFER_COOLDOWN_MS), [demo], "again once it has passed");
+  assert.ok(!last.has("alice/web") || last.get("alice/web") === 0);
+  admitOffers([], last, 3 * OFFER_COOLDOWN_MS);
+  assert.equal(last.size, 0, "old entries are let go");
 });

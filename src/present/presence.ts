@@ -17,7 +17,7 @@ import { describe, expoHint, METRO_PORTS, pickerGroups, runtimeLabel } from "../
 import { listDevices, OnePress, openInSimulator, simulator } from "../sim/run";
 import type { DeviceMemory } from "../sim/remember";
 import type { PanelContext } from "../sim/panel";
-import { freshPortMemory, metroOffers, wsKey, type Offer, type PortsReader, type Reading } from "./ports";
+import { admitOffers, freshPortMemory, metroOffers, wsKey, type Offer, type PortsReader, type Reading } from "./ports";
 
 /** What the presence asks of the dev panel (src/sim/panel.ts). */
 export interface PanelDeps {
@@ -88,6 +88,10 @@ export class Presence {
   /** The ports each of the person's running workspaces is listening on, as On-Demand last said, by wsKey. */
   listening = new Map<string, number[]>();
   private portMem = freshPortMemory();
+  /** When each workspace was last offered, and the offers' own budget: a workspace's code decides when Metro listens, so its offers
+      never use the room of the notifications that matter (a deploy that failed, a thing that waits). */
+  private offeredAt = new Map<string, number>();
+  private readonly offerLimiter = new Limiter(2, 60_000);
   /** How many offers have been made, and the last (the self-test reads them: the notifications' limiter may hold them back, and
       a refresh of the presence's own cycle may be the one that earns it). */
   offerCount = 0;
@@ -181,18 +185,30 @@ export class Presence {
     }
     this.listening = listening;
     const showing = this.d.panel?.context() ?? null;
-    const { next, offers } = metroOffers(this.portMem, readings, (o) => showing !== null && wsKey(showing.owner, showing.name) === wsKey(o.owner, o.name) && showing.remote === o.port);
-    this.portMem = next;
+    const earned = metroOffers(this.portMem, readings, (o) => showing !== null && wsKey(showing.owner, showing.name) === wsKey(o.owner, o.name) && showing.remote === o.port);
+    this.portMem = earned.next;
+    const offers = admitOffers(earned.offers, this.offeredAt, Date.now());
     this.offerCount += offers.length;
     if (offers.length > 0) this.lastOffer = offers[offers.length - 1] ?? null;
     const clicks = new Map<Item, () => void>();
     const items = offers.map((o) => {
       const device = this.d.memory.get(o.owner, o.name)?.name ?? "the iPhone simulator";
       const item: Item = { title: clean(`${o.name}'s app is running`, 60), body: clean(`Open it on ${device}`, 120), route: workspaceRoute(o.owner, o.name) ?? "#/" };
-      clicks.set(item, () => { void this.openInSimulator(o.owner, o.name, o.port); });
+      clicks.set(item, () => { void this.takeOffer(o); });
       return item;
     });
-    for (const item of this.limiter.admit(items, Date.now())) sink.show(item, clicks.get(item) ?? (() => this.d.openRoute(item.route)));
+    for (const item of this.offerLimiter.admit(items, Date.now())) sink.show(item, clicks.get(item) ?? (() => this.d.openRoute(item.route)));
+  }
+
+  /** An offer clicked, perhaps long after it was made (a notification stays in Notification Center): it opens the app only while
+      that workspace is still running with Metro listening on that port, as the last read said; otherwise it says so and does nothing. */
+  async takeOffer(o: Offer): Promise<void> {
+    if (!this.listening.get(wsKey(o.owner, o.name))?.includes(o.port)) {
+      const route = workspaceRoute(o.owner, o.name) ?? "#/";
+      for (const item of this.limiter.admit([{ title: clean(`${o.name}'s app has stopped`, 60), body: clean(`Metro is no longer running on ${o.port}`, 120), route }], Date.now())) sink.show(item, () => this.d.openRoute(item.route));
+      return;
+    }
+    await this.openInSimulator(o.owner, o.name, o.port);
   }
 
   private render(): void {

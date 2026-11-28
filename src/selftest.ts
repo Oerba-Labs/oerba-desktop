@@ -56,7 +56,8 @@ export async function runSelftest(h: Hooks): Promise<void> {
   };
   // Notifications are recorded and never shown, in this run alone.
   const notes: Item[] = [];
-  sink.show = (item) => { notes.push(item); };
+  const noteClicks = new Map<Item, () => void>();
+  sink.show = (item, onClick) => { notes.push(item); noteClicks.set(item, onClick); };
   const watchdog = setTimeout(() => { console.log("FAIL smoke run timed out"); h.dropScratch(); app.exit(1); }, 60_000);
   try {
     const other = h.config.otherOrigin;
@@ -274,14 +275,16 @@ export async function runSelftest(h: Hooks): Promise<void> {
     }
 
     // 4h. The ports a workspace listens on, from a stand-in for On-Demand: the menu offers those alone, and Metro starting earns one
-    // offer to open the app, never on the first read. The presence's own cycle reads too (every 400 ms here), so offers are counted,
-    // whichever read earned them; the notifications' limiter is full here, so the notifications themselves are not looked for.
+    // offer to open the app, never on the first read, on the device last used for it (4g left iPhone 17). The presence's own cycle
+    // reads too (every 400 ms here), so offers are counted, whichever read earned them. Offers have a budget of their own, so the
+    // offer's notification is shown although the others' is full; clicked once Metro has stopped, it runs nothing.
     {
       await fetch(`${h.policy.oerbaOrigin}/__now/running`, { method: "POST" });
       await presence.refresh();
       let listening: number[] = [3000];
       const asked = new Set<string>();
       const n0 = presence.offerCount;
+      const notes0 = notes.length;
       presence.ports = async (owner, name) => { asked.add(`${owner}/${name}`); return owner === "alice" && name === "demo" ? listening : null; };
       await presence.refresh();
       check("only the person's running workspace was asked about", [...asked].join() === "alice/demo", [...asked].join());
@@ -292,8 +295,21 @@ export async function runSelftest(h: Hooks): Promise<void> {
       await presence.refresh();
       await new Promise((r) => setTimeout(r, 500));
       check("Metro still listening earned none more", presence.offerCount === n0 + 1, String(presence.offerCount - n0));
+      const offerNote = notes.slice(notes0).find((n) => n.title === "demo's app is running");
+      check("the offer was notified, naming the device last used for that workspace", offerNote?.body === "Open it on iPhone 17", notes.slice(notes0).map((n) => `${n.title}: ${n.body}`).join(" | "));
       const labels3 = presence.labels();
       check("the menu offers the ports the workspace listens on, and no other", labels3.includes("    Open on localhost:3000") && labels3.includes("    Open 8081 in iOS Simulator") && !labels3.includes("    Open on localhost:5173") && !labels3.includes("    Open 19000 in iOS Simulator"), labels3.join(" | "));
+      listening = [3000];
+      await presence.refresh();
+      const realRun = simulator.run;
+      const ran: string[] = [];
+      simulator.run = async (file, args) => { ran.push([file, ...args].join(" ")); return { code: 0, stdout: "" }; };
+      try {
+        const click = offerNote ? noteClicks.get(offerNote) : undefined;
+        if (click) click();
+        await new Promise((r) => setTimeout(r, 300));
+        check("the offer clicked after Metro stopped ran nothing", !!click && ran.length === 0, ran.join(" | "));
+      } finally { simulator.run = realRun; }
       presence.ports = null;
     }
 
