@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { DeviceMemory, MAX_REMEMBERED, parsePanelDevice, parseRemembered, serialiseRemembered, workspaceKey } from "../src/sim/remember";
+import { DeviceMemory, MAX_REMEMBERED, parseAllowed, parsePanelDevice, parseRemembered, serialiseRemembered, workspaceKey } from "../src/sim/remember";
 
 const A = "265CBECB-2CF9-4E96-A149-C2CAEFC1AE27";
 const B = "1ABFBD1E-2DB7-4466-827C-5D6B2FC49AC9";
@@ -70,4 +70,35 @@ test("the device the dev panel last showed is kept beside the workspaces', held 
   assert.deepEqual(again.get("alice", "demo"), { udid: A, name: "iPhone 17 Pro" }, "the workspaces are kept with it");
   for (const junk of ["", "{}", '{"panel":null}', '{"panel":{"udid":"x","name":"n"}}', `{"panel":{"udid":"${A}","name":""}}`]) assert.equal(parsePanelDevice(junk), null, junk);
   assert.ok(!serialiseRemembered(new Map()).includes("panel"), "no panel device, no entry");
+});
+
+test("a workspace's yes to run in the simulator is kept beside the devices, held to the key's shape, and all let go at once", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "oerba-remember-"));
+  const file = path.join(dir, "devices.json");
+  const m = new DeviceMemory(file);
+  assert.equal(m.isAllowed("alice", "demo"), false, "nothing is allowed until the person says so");
+  m.set("alice", "demo", { udid: A, name: "iPhone 17 Pro" });
+  m.allow("Alice", "Demo");
+  m.allow("alice", "x.y");
+  m.allow("alice@github", "demo");
+  const again = new DeviceMemory(file);
+  assert.equal(again.isAllowed("alice", "demo"), true, "kept across runs, whatever the case");
+  assert.equal(again.isAllowed("alice", "other"), false);
+  assert.equal(again.allowedCount(), 1, "a name not of the shape is not kept");
+  assert.deepEqual(again.get("alice", "demo"), { udid: A, name: "iPhone 17 Pro" }, "the devices are kept with it");
+  again.forgetAllowed();
+  const after = new DeviceMemory(file);
+  assert.equal(after.isAllowed("alice", "demo"), false, "forgotten, it is asked again");
+  assert.deepEqual(after.get("alice", "demo"), { udid: A, name: "iPhone 17 Pro" }, "and the devices stay");
+  for (const junk of ["", "{}", '{"allowed":{}}', '{"allowed":["../x", 5, null, "Alice/Demo", "a/b/c"]}']) assert.deepEqual(parseAllowed(junk), [], junk);
+  assert.deepEqual(parseAllowed('{"allowed":["alice/demo","bob/x","alice/demo"]}'), ["bob/x", "alice/demo"], "each once, the newest last");
+  assert.ok(!serialiseRemembered(new Map()).includes("allowed"), "none allowed, no entry");
+});
+
+test("at most MAX_REMEMBERED workspaces are allowed, the oldest yes going first", () => {
+  const m = new DeviceMemory(null);
+  for (let i = 0; i <= MAX_REMEMBERED; i++) m.allow("alice", `w${i}`);
+  assert.equal(m.isAllowed("alice", "w0"), false);
+  assert.equal(m.isAllowed("alice", `w${MAX_REMEMBERED}`), true);
+  assert.equal(m.allowedCount(), MAX_REMEMBERED);
 });

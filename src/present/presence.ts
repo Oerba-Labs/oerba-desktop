@@ -64,6 +64,11 @@ export interface Deps {
   ports: PortsReader | null;
 }
 
+/** Whether the person lets a workspace's code run in the iOS Simulator, where it can read the Mac's files (SECURITY.md): asked once for
+    each workspace, before anything of it is started, and kept (src/sim/remember.ts). main sets `ask` to its dialog; until it does, the
+    answer is no. The self-test replaces it with a recorder. */
+export const consent = { ask: async (_owner: string, _name: string): Promise<boolean> => false };
+
 /** How a notification is shown. The self-test replaces it with a recorder, and nothing else does. */
 export const sink = {
   show(item: Item, onClick: () => void): void {
@@ -218,7 +223,7 @@ export class Presence {
   }
 
   private render(): void {
-    this.menu = buildMenu({ inOerba: this.inOerba, now: this.now, loginItem: app.getLoginItemSettings().openAtLogin, paletteKey: this.keys.palette, chatKey: this.keys.chat, update: this.update, forwards: this.d.relay.list(), listening: this.listening, devPanel: this.d.panel ? { open: this.d.panel.isOpen() } : undefined });
+    this.menu = buildMenu({ inOerba: this.inOerba, now: this.now, loginItem: app.getLoginItemSettings().openAtLogin, paletteKey: this.keys.palette, chatKey: this.keys.chat, update: this.update, forwards: this.d.relay.list(), listening: this.listening, devPanel: this.d.panel ? { open: this.d.panel.isOpen(), allowed: this.d.memory.allowedCount() } : undefined });
     this.tray?.setContextMenu(Menu.buildFromTemplate(this.menu.map((m) => this.toNative(m))));
     // The Dock icon carries the same pieces of the same menu (so a notch cannot hide them): open, workspaces with their forwards, new chat.
     // The Dock has its own Quit.
@@ -281,6 +286,13 @@ export class Presence {
     // Without it (an app that has none), notifications say it, as before the panel.
     const panel = this.d.panel;
     await this.simPress.run(async () => {
+      // Its code runs on this Mac there, as the person, and can read their files: asked once for each workspace, before any of it
+      // starts, the forward included. Not now opens nothing and says nothing; the next press asks again.
+      if (!this.d.memory.isAllowed(owner, name)) {
+        if (!(await consent.ask(owner, name))) return;
+        this.d.memory.allow(owner, name);
+        this.render();
+      }
       // The device asked for; else the one the panel shows, where the app is looked at; else the one last used for this workspace.
       const shown = panel?.device() ?? null;
       const remembered = this.d.memory.get(owner, name);
@@ -384,11 +396,19 @@ export class Presence {
   async devPanelFrom(ws: { owner: string; name: string } | null): Promise<void> {
     const panel = this.d.panel;
     if (!panel) return;
-    if (panel.isOpen()) { await panel.close(); this.render(); return; }
     const w = ws ? this.now?.workspaces.find((x) => x.status === "running" && wsKey(x.owner, x.name) === wsKey(ws.owner, ws.name)) : undefined;
     const port = w ? METRO_PORTS.find((p) => this.listening.get(wsKey(w.owner, w.name))?.includes(p)) : undefined;
+    // Open with no app in it, a press in a room whose Metro listens opens that app there (0.6.3: it closed the panel, and a second
+    // press was needed); open with an app, a press closes it.
+    if (panel.isOpen() && !(w && port !== undefined && panel.context() === null)) { await panel.close(); this.render(); return; }
     if (w && port !== undefined) { await this.openInSimulator(w.owner, w.name, port); return; }
     await this.toggleDevPanel();
+  }
+
+  /** Every workspace's yes to run in the simulator let go (the menu's Forget item): each is asked again before it next opens there. */
+  forgetAllowed(): void {
+    this.d.memory.forgetAllowed();
+    this.render();
   }
 
   /** The relay's list changed (a forward started, stopped or ended with its workspace): the menu is drawn again. */
@@ -404,6 +424,7 @@ export class Presence {
     else if (a.type === "simulator") void this.openInSimulator(a.owner, a.name, a.port);
     else if (a.type === "device") void this.pickDevice(a.udid);
     else if (a.type === "dev-panel") void this.toggleDevPanel();
+    else if (a.type === "forget-allowed") this.forgetAllowed();
     else if (a.type === "stop") void this.d.relay.stop(a.id).then(() => this.render());
     else if (a.type === "login") app.setLoginItemSettings({ openAtLogin: checked });   // only when the person ticks it
     else this.d.quit();

@@ -15,6 +15,7 @@ export type Action =
   | { type: "simulator"; owner: string; name: string; port: number }
   | { type: "device"; udid: string }
   | { type: "dev-panel" }
+  | { type: "forget-allowed" }
   | { type: "stop"; id: string }
   | { type: "login"; checked: boolean }
   | { type: "update" }
@@ -45,8 +46,9 @@ export interface MenuInput {
   /** The ports each workspace is listening on, as On-Demand last said (src/present/ports.ts), by wsKey. A workspace not in it
       (not read yet, or On-Demand not reached) is offered the usual ports, as before. */
   listening?: ReadonlyMap<string, readonly number[]>;
-  /** The dev panel, where this app has one: whether it is open. Absent, no Dev Panel item. */
-  devPanel?: { open: boolean };
+  /** The dev panel, where this app has one: whether it is open, and how many workspaces the person has let run in the simulator.
+      Absent, no Dev Panel item. */
+  devPanel?: { open: boolean; allowed?: number };
 }
 
 const SEP: MenuItem = { label: "", kind: "separator" };
@@ -86,6 +88,8 @@ export function buildMenu(i: MenuInput): MenuItem[] {
     items.push(rows.length > 0 ? { label: "Workspaces", submenu: rows } : { label: "Workspaces", enabled: false });
     // The dev panel on its own, with or without an app: ticked while it is open, and choosing it then closes it.
     if (i.devPanel) items.push({ label: "Dev Panel", kind: "checkbox", checked: i.devPanel.open, action: { type: "dev-panel" } });
+    // The person's yes, each workspace's, to run its code in the simulator, let go at once: each is asked again (0.6.3).
+    if (i.devPanel?.allowed) items.push({ label: `Forget Workspaces Allowed in Simulator (${i.devPanel.allowed})`, action: { type: "forget-allowed" } });
     if (i.now?.isOwner) items.push({ label: `Waiting on you (${i.now.needs.length})`, action: { type: "route", route: HOME } });
     items.push({ label: "New chat", action: { type: "route", route: CHAT } });
     items.push({ label: "Switch workspace…", action: { type: "palette" } });

@@ -1,10 +1,12 @@
 # Can an app in the iOS Simulator read the Mac's files?
 
 An app in the iOS Simulator is a process of the Mac, running as you, with no macOS sandbox of its own. Open in iOS Simulator and
-the dev panel run a workspace's JavaScript there, in Expo Go. Whether that code can read the Mac's files is not settled
-(`SECURITY.md`). If it can, a workspace's code could read your files at known paths. It could also read serve-sim's state
-file, which holds the panel's token, if it ever found the per-user temporary folder's random path. That is why the dev panel
-lets no agent open or drive the device yet.
+the dev panel run a workspace's JavaScript there, in Expo Go. Whether that code could read the Mac's files was not settled
+until this probe ran on 28 Nov 2026, from a workspace in Oerba Desktop 0.6.2's panel: it can. Every attempt below read, by all
+three ways, and both listings answered (`SECURITY.md`, *The dev panel*). So a workspace's code there can read your files at
+known paths, and could read serve-sim's state file, which holds the panel's token, by walking to the per-user temporary
+folder. That is why 0.6.3 asks once for each workspace before its code first runs there, and why no agent may open or drive
+the iOS Simulator. Run it again when Expo Go moves to a new SDK.
 
 `App.js` here settles it. It tries to read `/etc/hosts` and a file you make for the test, by `fetch`, by `XMLHttpRequest` and by
 `expo-file-system`. It also asks whether it can list your home folder and `/var/folders`. It shows a length or a count for

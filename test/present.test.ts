@@ -206,3 +206,11 @@ test("the menu has Dev Panel where the app has the panel, ticked while it is ope
   assert.equal(find(null), undefined);
   assert.equal(buildMenu({ ...base, inOerba: false, devPanel: { open: false } }).find((m) => m.label === "Dev Panel"), undefined, "not before the person is in");
 });
+
+test("the menu offers to forget the workspaces allowed in the simulator, with their count, only while there are some", () => {
+  const base = { inOerba: true, now: null, loginItem: false, paletteKey: true, chatKey: true, update: null };
+  const forget = (allowed?: number) => buildMenu({ ...base, devPanel: { open: false, ...(allowed === undefined ? {} : { allowed }) } }).find((m) => m.action?.type === "forget-allowed");
+  assert.deepEqual(forget(3), { label: "Forget Workspaces Allowed in Simulator (3)", action: { type: "forget-allowed" } });
+  assert.equal(forget(0), undefined);
+  assert.equal(forget(), undefined);
+});

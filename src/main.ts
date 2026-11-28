@@ -16,7 +16,7 @@ import { checkingSetup, computeSetup, type SetupState } from "./setup/state";
 import { isOerbaPage } from "./policy/navigation";
 import { safeRoute } from "./present/routes";
 import { OPEN_PALETTE_JS } from "./present/palette";
-import { Presence } from "./present/presence";
+import { consent, Presence } from "./present/presence";
 import { realEngine, Updater, type Engine } from "./update/updater";
 import type { Idle } from "./update/decide";
 import { UpdateWindow } from "./update/window";
@@ -256,6 +256,21 @@ app.whenReady().then(() => {
   installHardening(policy);
   // Oerba's own page asked, by the app's own scheme, just after a press (the window handler held it to that).
   desktop.devPanel = (workspace) => { void presence?.devPanelFrom(workspace); };
+  // Before a workspace's code first runs in the iOS Simulator, where it can read the Mac's files: the window shown first, so that a
+  // press from a notification never asks behind a hidden one. Not Now is the default and Escape's answer.
+  consent.ask = async (owner, name) => {
+    showWindow();
+    if (!win || win.isDestroyed()) return false;
+    const r = await dialog.showMessageBox(win, {
+      type: "warning",
+      buttons: ["Open", "Not Now"],
+      defaultId: 1,
+      cancelId: 1,
+      message: `Run ${name}'s code on this Mac?`,
+      detail: `Opening ${owner}/${name}'s app in the iOS Simulator runs its code on this Mac, as you. There it can read your files and send them anywhere: the simulator puts no wall around it. Open it only if you would run this workspace's code on this Mac yourself.\n\nYou are asked once for each workspace. Forget Workspaces Allowed in Simulator, in the menu bar item, asks again.`,
+    });
+    return r.response === 0;
+  };
   panel = new SimPanel(policy, SAFE, {
     window: () => win, relayout, choose: () => { void presence?.chooseDevice(); }, changed: () => { presence?.redraw(); tellPage(); },
     refuse: () => (app.isPackaged && !app.isInApplicationsFolder() ? "Move Oerba to Applications, open it from there, and press Open in iOS Simulator again." : null),

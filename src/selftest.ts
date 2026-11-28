@@ -10,7 +10,7 @@ import type { RelayManager } from "./relay/manager";
 import type { Engine, Updater } from "./update/updater";
 import type { Idle } from "./update/decide";
 import type { UpdateWindow } from "./update/window";
-import { sink } from "./present/presence";
+import { consent, sink } from "./present/presence";
 import type { Item } from "./present/notify";
 import { desktop, external, refusals, setRole } from "./shell/hardening";
 import { simulator, type Runner } from "./sim/run";
@@ -62,6 +62,10 @@ export async function runSelftest(h: Hooks): Promise<void> {
   // simulator of this Mac's. The presence's own entry point is checked with stand-ins, in 4g.
   const desktopAsks: unknown[] = [];
   desktop.devPanel = (workspace) => { desktopAsks.push(workspace); };
+  // The person's answer before a workspace's code first runs in the simulator: recorded, and Open unless a check says otherwise.
+  const consentAsks: string[] = [];
+  let consentAnswer = true;
+  consent.ask = async (owner, name) => { consentAsks.push(`${owner}/${name}`); return consentAnswer; };
   const watchdog = setTimeout(() => { console.log("FAIL smoke run timed out"); h.dropScratch(); app.exit(1); }, 60_000);
   try {
     const other = h.config.otherOrigin;
@@ -341,6 +345,9 @@ export async function runSelftest(h: Hooks): Promise<void> {
         const c7 = calls.length;
         await presence.devPanelFrom({ owner: "bob", name: "other" });
         check("for a workspace not the person's, the panel alone, nothing opened in it", panel.open && panel.context === null && !calls.slice(c7).some((c) => c.includes(" openurl ")), calls.slice(c7).join(" | "));
+        const c7b = calls.length;
+        await presence.devPanelFrom({ owner: "alice", name: "demo" });
+        check("the panel open with no app, the button in a room whose Metro listens opens that app there, rather than closing it", panel.open && panel.context?.name === "demo" && calls.slice(c7b).some((c) => opened(c, SIM)), calls.slice(c7b).join(" | "));
         await presence.devPanelFrom(null);
         presence.listening = new Map();
         const c8 = calls.length;
@@ -348,6 +355,25 @@ export async function runSelftest(h: Hooks): Promise<void> {
         check("for a room whose Metro is not listening, the panel alone", panel.open && panel.context === null && !calls.slice(c8).some((c) => c.includes(" openurl ")), calls.slice(c8).join(" | "));
         await presence.devPanelFrom(null);
         check("and closed again", !panel.open);
+        // Asked once for each workspace before its code first runs in the simulator (0.6.3), where it can read the Mac's files:
+        // alice/demo at its first open, and never since; Not Now starts nothing, not even the forward; Open is kept; Forget asks again.
+        check("alice/demo was asked once, before its first open, and not again", consentAsks.filter((k) => k === "alice/demo").length === 1, consentAsks.join(" "));
+        consentAnswer = false;
+        const c9 = calls.length;
+        const forwards = h.getRelay().list().length;
+        await presence.openInSimulator("carol", "fresh", 8081);
+        check("a workspace not yet allowed is asked first, and Not Now starts nothing: no forward, no simulator, no panel",
+          consentAsks[consentAsks.length - 1] === "carol/fresh" && calls.length === c9 && h.getRelay().list().length === forwards && !panel.open, `${consentAsks.join(" ")} | ${calls.slice(c9).join(" | ")}`);
+        await presence.openInSimulator("carol", "fresh", 8081);
+        check("  and the next press asks again", consentAsks.filter((k) => k === "carol/fresh").length === 2);
+        consentAnswer = true;
+        presence.forgetAllowed();
+        const askedBefore = consentAsks.length;
+        await presence.openInSimulator("alice", "demo", 8081);
+        check("Forget lets every yes go: alice/demo is asked again, and Open opens it", consentAsks.length === askedBefore + 1 && consentAsks[askedBefore] === "alice/demo" && panel.open && panel.context?.name === "demo", consentAsks.join(" "));
+        await presence.openInSimulator("alice", "demo", 8081);
+        check("  and its yes is kept again", consentAsks.length === askedBefore + 1);
+        await presence.devPanelFrom(null);
         await h.getRelay().stopAll();
         notes.length = 0;
       } finally {
