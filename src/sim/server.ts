@@ -1,6 +1,7 @@
 /* Runs serve-sim for the dev panel: Expo's command, in a utility process of the app's own (Electron's Node, so no Node need be
    installed, and the RunAsNode fuse stays off), with the words of src/sim/serve.ts and nothing else. One at a time, for one device.
-   It is started only by the app's own menu, through the panel (src/sim/panel.ts); no page, bridge or IPC starts it.
+   It is started only by the person, from the app's own menus (Open in iOS Simulator, or Dev Panel), through the panel
+   (src/sim/panel.ts); no page, bridge or IPC starts it.
 
    While it runs, serve-sim arms a loader in the simulator (its launchd's DYLD_INSERT_LIBRARIES) for the whole session, and its
    capture reads the simulator's screen and sends it touches. Stopped with SIGINT, as Ctrl+C stops it, it takes the loader out

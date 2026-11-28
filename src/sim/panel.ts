@@ -7,7 +7,8 @@
    - its session is its own and in memory alone, so serve-sim's cookie never meets Oerba's and is gone when the app quits;
    - it gets no preload, and every permission, download and window is refused, as for every view (src/shell/hardening.ts).
    - its requests may reach serve-sim's origin alone (previewRequestAllowed).
-   It is opened only by the app's own menu, after "Open in iOS Simulator" has opened the workspace's app in Expo Go. Closing it,
+   It is opened only by the person, from the app's own menus: after "Open in iOS Simulator" has opened the workspace's app in Expo
+   Go, or by Dev Panel (0.6.1), with no app. Closing it,
    closing (hiding) the window, quitting and restarting for an update each stop serve-sim. It has had no Pop out (to Device
    Hub) since 0.5.2: the owner had it taken off, the panel being where the phone is shown. */
 
@@ -184,7 +185,7 @@ export class SimPanel {
       that port is shown; the bar stays and says so. */
   private lost(): void {
     this.dropPreview();
-    if (this.bar) this.put({ status: "The panel's helper stopped. Open in iOS Simulator starts it again." });
+    if (this.bar) this.put({ status: this.ctx ? "The panel's helper stopped. Open in iOS Simulator starts it again." : "The panel's helper stopped. Close the panel and choose Dev Panel to start it again." });
   }
 
   /** Records what the bar says, the workspace and app always from the panel's context, and sends it to the bar if it is there. */
